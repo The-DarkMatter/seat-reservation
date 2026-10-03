@@ -1,0 +1,95 @@
+// Grafana Alloy on the VM: ships metrics and logs to Grafana Cloud so the
+// public dashboard keeps working even if this box is in trouble.
+
+// ---- metrics --------------------------------------------------------------------
+
+prometheus.remote_write "cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROM_URL")
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROM_USER")
+      password = sys.env("GRAFANA_CLOUD_API_KEY")
+    }
+  }
+  external_labels = { instance = sys.env("INSTANCE") }
+}
+
+// The API itself, every 5s so a few-second burst is visible.
+prometheus.scrape "app" {
+  targets         = [{ "__address__" = "app:8080", "job" = "seat-reservation" }]
+  metrics_path    = "/metrics"
+  scrape_interval = "5s"
+  forward_to      = [prometheus.remote_write.cloud.receiver]
+}
+
+// Host CPU / memory / disk / network (embedded node_exporter).
+prometheus.exporter.unix "host" {
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/host/root"
+}
+
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.cloud.receiver]
+}
+
+// MySQL: TPS, row-lock waits, connections (embedded mysqld_exporter).
+prometheus.exporter.mysql "db" {
+  data_source_name = sys.env("MYSQL_EXPORTER_DSN")
+}
+
+prometheus.scrape "mysql" {
+  targets         = prometheus.exporter.mysql.db.targets
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.cloud.receiver]
+}
+
+// ---- logs -----------------------------------------------------------------------
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_amogh_service"]
+    target_label  = "service_name"
+  }
+}
+
+loki.source.docker "containers" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.relabel.containers.output
+  relabel_rules = discovery.relabel.containers.rules
+  forward_to    = [loki.process.json.receiver]
+}
+
+// The app logs ECS JSON: lift the level into a label (low cardinality) and keep
+// request_id / event as structured metadata, so they're searchable without
+// exploding the label index.
+loki.process "json" {
+  stage.json {
+    expressions = { level = "log.level", request_id = "request_id", event = "event" }
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+  stage.structured_metadata {
+    values = { request_id = "", event = "" }
+  }
+  forward_to = [loki.write.cloud.receiver]
+}
+
+loki.write "cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_LOKI_URL")
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_LOKI_USER")
+      password = sys.env("GRAFANA_CLOUD_API_KEY")
+    }
+  }
+}

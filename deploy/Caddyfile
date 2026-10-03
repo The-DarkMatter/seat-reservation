@@ -1,0 +1,18 @@
+# TLS from Let's Encrypt, automatically. Cloudflare is DNS-only (grey cloud) for
+# this hostname, so a load test reaches this box directly instead of being
+# challenged or throttled by a proxy in between.
+{$DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy app:8080 {
+		# Reuse upstream connections; a burst should not mean 20k new TCP connects to Tomcat.
+		transport http {
+			keepalive 90s
+			keepalive_idle_conns 2048
+			keepalive_idle_conns_per_host 2048
+		}
+		# Wait out a deploy restart rather than failing fast with a 502.
+		lb_try_duration 20s
+		lb_try_interval 250ms
+	}
+}

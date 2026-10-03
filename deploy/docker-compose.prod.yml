@@ -1,0 +1,83 @@
+# Production = the same docker-compose.yml a reviewer runs locally, plus this file:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d
+# Adds TLS (Caddy), metrics + log shipping to Grafana Cloud (Alloy), and sizes
+# things for the 4 OCPU / 24 GB Oracle Ampere A1 VM. Values come from /opt/seats/.env
+# (see deploy/.env.example); nothing secret lives in the repo.
+
+services:
+  app:
+    # The image CI built and pushed for this commit, instead of building on the box.
+    image: ${APP_IMAGE:-ghcr.io/the-darkmatter/seat-reservation}:${APP_TAG:-latest}
+    pull_policy: always
+    labels:
+      com.amogh.service: seat-reservation
+    environment:
+      GIT_SHA: ${APP_TAG:-latest}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-40}
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -XX:+UseG1GC"
+    deploy:
+      resources:
+        limits:
+          memory: 6g
+
+  mysql:
+    labels:
+      com.amogh.service: mysql
+    deploy:
+      resources:
+        limits:
+          memory: 12g
+
+  caddy:
+    image: caddy:2.10
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    labels:
+      com.amogh.service: caddy
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.10.0
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      GRAFANA_CLOUD_PROM_URL: ${GRAFANA_CLOUD_PROM_URL:?}
+      GRAFANA_CLOUD_PROM_USER: ${GRAFANA_CLOUD_PROM_USER:?}
+      GRAFANA_CLOUD_LOKI_URL: ${GRAFANA_CLOUD_LOKI_URL:?}
+      GRAFANA_CLOUD_LOKI_USER: ${GRAFANA_CLOUD_LOKI_USER:?}
+      GRAFANA_CLOUD_API_KEY: ${GRAFANA_CLOUD_API_KEY:?}
+      MYSQL_EXPORTER_DSN: "seats:${DB_PASSWORD}@(mysql:3306)/"
+      INSTANCE: ${INSTANCE_NAME:-oracle-a1}
+    volumes:
+      - ./ops/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+      - alloy-data:/var/lib/alloy/data
+    pid: host
+    labels:
+      com.amogh.service: alloy
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
+  alloy-data:
