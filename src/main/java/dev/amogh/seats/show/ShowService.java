@@ -103,6 +103,7 @@ public class ShowService {
         repository.insertSections(show.id(), plan.sections());
         repository.insertSeats(show.id(), plan.seats());
         catalog.remember(show);
+        invalidateListings();
 
         var seats = plan.seats().stream().map(s -> new ShowView.SeatView(s.label(), "available")).toList();
         return toView(show, seats);
@@ -122,6 +123,11 @@ public class ShowService {
             throw ApiException.badRequest("invalid_limit", "limit must be between 1 and " + MAX_LIST);
         }
         return listings.get(kind + ":" + limit, k -> loadList(kind, limit));
+    }
+
+    /** A show was created or retired: the next listing is read fresh, not up to a second stale. */
+    public void invalidateListings() {
+        listings.invalidateAll();
     }
 
     private List<ShowSummary> loadList(String kind, int limit) {

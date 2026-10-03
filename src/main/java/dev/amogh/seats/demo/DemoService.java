@@ -98,6 +98,7 @@ public class DemoService {
                 if (stale) {
                     ShowView fresh = shows.create(template.toRequest(name, null), "featured");
                     repository.hideOtherFeatured(name, fresh.id());
+                    shows.invalidateListings();
                     log.atInfo().addKeyValue("event", "featured_rotated").addKeyValue("show_id", fresh.id())
                             .addKeyValue("template", template.id()).log("featured {} is now {}", name, fresh.id());
                 }
