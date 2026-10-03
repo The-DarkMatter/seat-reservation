@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -35,9 +36,10 @@ public class ApiExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, "malformed_request", rootMessage(e));
     }
 
-    @ExceptionHandler(DataAccessResourceFailureException.class)
-    ResponseEntity<Map<String, Object>> databaseDown(DataAccessResourceFailureException e) {
-        log.error("database unavailable", e);
+    /** Can't reach MySQL (no connection, or no transaction could be opened): fail closed. */
+    @ExceptionHandler({DataAccessResourceFailureException.class, CannotCreateTransactionException.class})
+    ResponseEntity<Map<String, Object>> databaseDown(RuntimeException e) {
+        log.error("database unavailable: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .header("Retry-After", "1")
                 .body(body("database_unavailable", "Reservations are paused while the database is unreachable"));

@@ -60,6 +60,11 @@ server:
     max-keep-alive-requests: -1
 
 management:
+  health:
+    db:
+      # Replaced by DatabaseHealthIndicator ("database"), which has its own
+      # fast-failing connection instead of borrowing from the main pool.
+      enabled: false
   endpoints:
     web:
       base-path: /
@@ -78,7 +83,7 @@ management:
         live:
           include: livenessState
         ready:
-          include: readinessState,db
+          include: readinessState,database
   metrics:
     distribution:
       percentiles-histogram:

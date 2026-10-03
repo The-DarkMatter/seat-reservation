@@ -38,7 +38,7 @@ class ObservabilityTests {
 
         var ready = api.get("/health/ready", null);
         assertThat(ready.status()).isEqualTo(200);
-        assertThat(ready.body().get("components").get("db").get("status").asString()).isEqualTo("UP");
+        assertThat(ready.body().get("components").get("database").get("status").asString()).isEqualTo("UP");
     }
 
     @Test

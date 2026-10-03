@@ -1,0 +1,10 @@
+target/
+loadtest/target/
+.git/
+.github/
+.idea/
+.vscode/
+*.iml
+ops/
+deploy/
+*.md
