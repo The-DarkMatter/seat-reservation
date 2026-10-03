@@ -3,6 +3,8 @@ name: ci
 on:
   push:
     branches: [main]
+    # Docs and the Grafana dashboard JSON don't change what runs on the VM.
+    paths-ignore: ["**.md", "ops/grafana/**"]
   pull_request:
   workflow_dispatch:
 

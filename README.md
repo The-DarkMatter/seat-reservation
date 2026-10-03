@@ -3,7 +3,8 @@
 A small service that sells assigned seats for a show and stays correct when tens of thousands of buyers hit it in the same second. It never sells a seat twice, never lets a user go over their limit, and never reserves twice for a retried request.
 
 - **Live:** https://seats.amogh.cloud (Oracle Cloud Ampere A1 VM)
-- **Metrics:** https://seats.amogh.cloud/metrics, plus a public Grafana dashboard: _link coming_
+- **Live dashboard (public, no login):** [Grafana: on-sale burst](https://violetmonorail1413.grafana.net/public-dashboards/4a39fb254b98447aa608638245763b54) shows outcomes by reason, 5xx, reconciliation drift, seat gauges, latency, pool saturation, and logs searchable by request id
+- **Raw metrics:** https://seats.amogh.cloud/metrics
 - **Latest live burst:** run from GitHub's network against the live URL: 19,537 reserve calls, 26/26 checks passed, zero 5xx, zero transport errors ([job log](https://github.com/The-DarkMatter/seat-reservation/actions/runs/37150172050)). Re-run it any time: Actions → *live burst* → Run workflow.
 - **Design write-up:** [WRITEUP.md](WRITEUP.md)
 
