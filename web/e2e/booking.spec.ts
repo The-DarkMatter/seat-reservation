@@ -23,8 +23,13 @@ test('two buyers race for one seat: exactly one gets it', async ({ browser, requ
   const results = await Promise.all([outcome(pa), outcome(pb)]);
   expect(results.sort()).toEqual(['lost', 'won']);
 
-  const map = await (await request.get(`/shows/${show}/seatmap`)).json();
-  expect(map.counts.held + map.counts.confirmed).toBe(1);
+  // The seat map is cached for 500 ms, so give it a moment to catch up.
+  await expect
+    .poll(async () => {
+      const map = await (await request.get(`/shows/${show}/seatmap`)).json();
+      return map.counts.held + map.counts.confirmed;
+    })
+    .toBe(1);
   await Promise.all([a.close(), b.close()]);
 });
 
