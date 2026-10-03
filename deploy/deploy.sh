@@ -12,7 +12,7 @@ cd /opt/seats
 compose() {
   local profiles=()
   # Ship metrics/logs to Grafana Cloud only once it's configured.
-  if grep -q '^GRAFANA_CLOUD_API_KEY=glc_' .env 2>/dev/null; then
+  if grep -qE '^GRAFANA_CLOUD_API_KEY=glc_[A-Za-z0-9_=-]{20,}' .env 2>/dev/null; then
     profiles=(--profile cloud)
   fi
   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml "${profiles[@]}" "$@"
