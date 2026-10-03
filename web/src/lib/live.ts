@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import { api, type Reservation, type SeatMapData } from './api';
+import { api, serverNow, type Reservation, type SeatMapData } from './api';
 
 /**
  * Polls GET /shows/{id}/seatmap. The server caches each seat map for 500 ms, so
@@ -62,9 +62,21 @@ export function useMine(showId: string | undefined, intervalMs = 5000) {
   return [list, refresh] as const;
 }
 
-/** Labels this user currently holds or owns. */
-export function liveSeats(list: Reservation[]): Set<string> {
-  const out = new Set<string>();
-  for (const r of list) if (r.status === 'held' || r.status === 'confirmed') r.seats.forEach((s) => out.add(s));
-  return out;
+/**
+ * This user's seats for a show, split by state: paid (confirmed) seats, and
+ * live holds still waiting for payment (soonest to expire first).
+ */
+export function mySeats(list: Reservation[], now = serverNow()) {
+  const paid = new Set<string>();
+  const holding = new Set<string>();
+  const holds: Reservation[] = [];
+  for (const r of list) {
+    if (r.status === 'confirmed') r.seats.forEach((s) => paid.add(s));
+    if (r.status === 'held' && r.expires_at && Date.parse(r.expires_at) > now) {
+      holds.push(r);
+      r.seats.forEach((s) => holding.add(s));
+    }
+  }
+  holds.sort((a, b) => Date.parse(a.expires_at!) - Date.parse(b.expires_at!));
+  return { paid, holding, holds, all: new Set([...paid, ...holding]) };
 }

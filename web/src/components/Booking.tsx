@@ -1,6 +1,6 @@
-import { useState } from 'preact/hooks';
-import type { Section } from '../lib/api';
-import { plural, rupees, seatShort } from '../lib/format';
+import { useEffect, useState } from 'preact/hooks';
+import { serverNow, type Reservation, type Section } from '../lib/api';
+import { mmss, plural, rupees, seatShort } from '../lib/format';
 import { Sheet } from './Overlays';
 import { StandingIcon } from './Icons';
 
@@ -18,6 +18,72 @@ export function PartialToggle({ partial, onChange }: { partial: boolean; onChang
   );
 }
 
+function seatSummary(labels: string[], sectionOf: (label: string) => Section | undefined) {
+  const groups = new Map<string, string[]>();
+  for (const label of labels) {
+    const name = sectionOf(label)?.name ?? 'Seats';
+    groups.set(name, [...(groups.get(name) ?? []), seatShort(label)]);
+  }
+  return [...groups].map(([name, seats]) => `${name} (${seats.join(', ')})`).join(' · ');
+}
+
+/** m:ss left on a hold, ticking on server time; calls onExpired once when it runs out. */
+export function useCountdown(expiresAt: string | undefined, onExpired?: () => void) {
+  const [now, setNow] = useState(serverNow());
+  useEffect(() => {
+    const t = setInterval(() => setNow(serverNow()), 500);
+    return () => clearInterval(t);
+  }, []);
+  const left = expiresAt ? Date.parse(expiresAt) - now : 0;
+  useEffect(() => {
+    if (expiresAt && left <= 0) onExpired?.();
+  }, [left <= 0]);
+  return left;
+}
+
+type HoldBarProps = {
+  hold: Reservation;
+  others: number;
+  sectionOf: (label: string) => Section | undefined;
+  onContinue: () => void;
+  onRelease: () => void;
+  onExpired: () => void;
+};
+
+/**
+ * Back on the seat map while seats are on hold for you: they stay selected and
+ * this bar offers to pick up the payment where you left it, with the hold's
+ * real countdown.
+ */
+export function HoldBar({ hold, others, sectionOf, onContinue, onRelease, onExpired }: HoldBarProps) {
+  const left = useCountdown(hold.expires_at, onExpired);
+  return (
+    <div class="bottom-bar open hold-bar">
+      <div class="container">
+        <div class="bottom-bar-seats">
+          <small>
+            <span class={`pill ${left < 60_000 ? 'pill-bad' : 'pill-warn'}`} role="timer">
+              On hold for you · {mmss(left)}
+            </span>{' '}
+            <button class="back-link" style={{ padding: 0, fontSize: '13px' }} onClick={onRelease}>
+              release
+            </button>
+            {others > 0 && <span class="muted"> · +{plural(others, 'other hold')} in My bookings</span>}
+          </small>
+          <div title={seatSummary(hold.seats, sectionOf)}>{seatSummary(hold.seats, sectionOf)}</div>
+        </div>
+        <div class="bottom-bar-total">
+          <strong>{rupees(hold.amount_paise)}</strong>
+          <small>{plural(hold.seats.length, 'ticket')}</small>
+        </div>
+        <button class="btn btn-display proceed" onClick={onContinue}>
+          CONTINUE TO PAYMENT
+        </button>
+      </div>
+    </div>
+  );
+}
+
 type BarProps = {
   selection: string[];
   sectionOf: (label: string) => Section | undefined;
@@ -31,15 +97,8 @@ type BarProps = {
 /** Slides up once something is selected: which seats, how much, and the big PROCEED. */
 export function BottomBar({ selection, sectionOf, partial, onPartial, busy, onProceed, onClear }: BarProps) {
   const open = selection.length > 0;
-  const groups = new Map<string, string[]>();
-  let total = 0;
-  for (const label of selection) {
-    const s = sectionOf(label);
-    if (!s) continue;
-    total += s.price_paise;
-    groups.set(s.name, [...(groups.get(s.name) ?? []), seatShort(label)]);
-  }
-  const summary = [...groups].map(([name, seats]) => `${name} (${seats.join(', ')})`).join(' · ');
+  const total = selection.reduce((sum, label) => sum + (sectionOf(label)?.price_paise ?? 0), 0);
+  const summary = seatSummary(selection, sectionOf);
   return (
     <div class={`bottom-bar${open ? ' open' : ''}`} aria-hidden={!open}>
       <div class="container">

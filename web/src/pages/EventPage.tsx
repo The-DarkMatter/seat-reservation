@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { BottomBar, StandingSheet } from '../components/Booking';
+import { BottomBar, HoldBar, StandingSheet } from '../components/Booking';
 import { BackIcon, FilterIcon } from '../components/Icons';
 import { Loading, Modal } from '../components/Overlays';
 import { SeatMapView } from '../components/SeatMapView';
@@ -7,7 +7,7 @@ import { VenueOverview } from '../components/VenueOverview';
 import { api, ApiError, type Counts, type ReserveBody, type Section, type Show } from '../lib/api';
 import { eventDate, plural, rupees, seatShort } from '../lib/format';
 import { sectionColour, sectionGeometry, shade, type SectionGeometry } from '../lib/layout';
-import { liveSeats, useMine, useSeatMap } from '../lib/live';
+import { mySeats, useMine, useSeatMap } from '../lib/live';
 import { linkTo, navigate } from '../lib/router';
 import { toast } from '../lib/toast';
 
@@ -70,7 +70,8 @@ export function EventPage({ id }: { id: string }) {
     return out;
   }, [seatMap]);
 
-  const mine = useMemo(() => liveSeats(mineList), [mineList]);
+  const my = useMemo(() => mySeats(mineList), [mineList]);
+  const mine = my.all; // paid or on hold: counts toward the per-user limit
   const sectionOf = useCallback(
     (label: string) => (sections.length === 1 ? sections[0] : sections.find((s) => label.startsWith(`${s.code}-`))),
     [sections],
@@ -96,7 +97,8 @@ export function EventPage({ id }: { id: string }) {
 
   const limit = show.per_user_limit;
   const toggleSeat = (label: string) => {
-    if (mine.has(label)) return toast('That seat is already yours', 'info', 2500);
+    if (my.holding.has(label)) return toast('Already on hold for you: continue to payment to keep it', 'info', 3000);
+    if (my.paid.has(label)) return toast('You already have a ticket for this seat', 'info', 2500);
     if (selected.includes(label)) return setSelected(selected.filter((l) => l !== label));
     if (stateOf(label) !== 'a') return toast(`${seatShort(label)} is ${stateOf(label) === 'h' ? 'on hold' : 'taken'}`, 'info', 2500);
     if (selected.length + mine.size >= limit) {
@@ -194,7 +196,8 @@ export function EventPage({ id }: { id: string }) {
                 geometry={geometry.get(current.code)!}
                 states={states[current.code]}
                 selected={new Set(selected)}
-                mine={mine}
+                mine={my.paid}
+                holding={my.holding}
                 colour={colour}
                 onToggle={toggleSeat}
               />
@@ -263,6 +266,25 @@ export function EventPage({ id }: { id: string }) {
         </div>
       </div>
 
+      {selected.length === 0 && my.holds.length > 0 ? (
+        <HoldBar
+          hold={my.holds[0]}
+          others={my.holds.length - 1}
+          sectionOf={sectionOf}
+          onContinue={() => navigate(`/checkout/${my.holds[0].reservation_id}`)}
+          onRelease={async () => {
+            await api.cancel(my.holds[0].reservation_id).catch(() => {});
+            toast('Seats released for someone else', 'info');
+            refreshMine();
+            refreshMap();
+          }}
+          onExpired={() => {
+            toast('Your hold ran out and the seats went back on sale', 'warn');
+            refreshMine();
+            refreshMap();
+          }}
+        />
+      ) : (
       <BottomBar
         selection={selected}
         sectionOf={sectionOf}
@@ -272,6 +294,7 @@ export function EventPage({ id }: { id: string }) {
         onClear={() => setSelected([])}
         onProceed={() => book({ seats: selected, allow_partial: partial }, selected)}
       />
+      )}
 
       {standing && (
         <StandingSheet

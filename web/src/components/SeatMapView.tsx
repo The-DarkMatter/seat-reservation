@@ -9,7 +9,10 @@ type Props = {
   /** One character per seat from the live seat map: a(vailable) h(eld) c(onfirmed). */
   states?: string;
   selected: Set<string>;
+  /** Paid for by this user. */
   mine: Set<string>;
+  /** On hold for this user, waiting for payment: drawn like a selection. */
+  holding?: Set<string>;
   colour: string;
   onToggle?: (label: string) => void;
 };
@@ -20,7 +23,7 @@ const STAGE_SPACE = 2.6; // room above the seats for the "stage this way" bar
 const MAX_ZOOM = 6;
 const COARSE = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
 
-export function SeatMapView({ section, geometry: g, states, selected, mine, colour, onToggle }: Props) {
+export function SeatMapView({ section, geometry: g, states, selected, mine, holding, colour, onToggle }: Props) {
   const shellRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState<View>({ k: 1, x: 0, y: 0 });
@@ -178,14 +181,15 @@ export function SeatMapView({ section, geometry: g, states, selected, mine, colo
 
   const seatState = (s: SeatPos) => {
     if (mine.has(s.label)) return 'mine';
+    if (holding?.has(s.label)) return 'holding';
     if (selected.has(s.label)) return 'selected';
     const c = states?.[s.index] ?? 'a';
     return c === 'c' ? 'sold' : c === 'h' ? 'held' : 'available';
   };
 
   const ticks = useMemo(
-    () => g.seats.filter((s) => selected.has(s.label) || mine.has(s.label)),
-    [g, selected, mine],
+    () => g.seats.filter((s) => selected.has(s.label) || mine.has(s.label) || holding?.has(s.label)),
+    [g, selected, mine, holding],
   );
 
   return (
@@ -222,7 +226,7 @@ export function SeatMapView({ section, geometry: g, states, selected, mine, colo
               const r = small ? 0.17 : 0.4;
               const fill =
                 state === 'available' ? colour
-                : state === 'selected' ? strong
+                : state === 'selected' || state === 'holding' ? strong
                 : state === 'mine' ? 'var(--mine)'
                 : state === 'held' ? 'var(--held)'
                 : 'var(--sold)';
@@ -241,9 +245,9 @@ export function SeatMapView({ section, geometry: g, states, selected, mine, colo
                   stroke-width={0.05}
                   role="button"
                   tabindex={s.index === focusIndex ? 0 : -1}
-                  aria-pressed={state === 'selected'}
+                  aria-pressed={state === 'selected' || state === 'holding'}
                   aria-label={`${row ? `Row ${row} seat ${seat}` : `Seat ${seat}`}, ${section.name}, ${rupees(section.price_paise)}, ${
-                    state === 'available' ? 'available' : state === 'selected' ? 'selected' : state === 'mine' ? 'yours' : state === 'held' ? 'on hold' : 'sold'
+                    state === 'available' ? 'available' : state === 'selected' ? 'selected' : state === 'holding' ? 'on hold for you' : state === 'mine' ? 'yours' : state === 'held' ? 'on hold' : 'sold'
                   }`}
                 />
               );

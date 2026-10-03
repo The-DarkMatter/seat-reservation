@@ -64,6 +64,42 @@ test('book, pay (after one failed attempt), get a ticket, cancel it', async ({ p
   expect(map.counts.available).toBe(map.counts.available + map.counts.held + map.counts.confirmed);
 });
 
+test('coming back during a hold: seats stay selected and payment picks up where it left off', async ({ page, request }) => {
+  const show = await demoShow(request, 'club');
+  await openSeats(page, show);
+  await seat(page, 'D', 3).click();
+  await seat(page, 'D', 4).click();
+  await page.getByRole('button', { name: 'PROCEED' }).click();
+  await expect(page).toHaveURL(/\/checkout\//);
+  const checkoutUrl = page.url();
+
+  await page.goBack();
+  await expect(page.locator('.seatmap-viewport svg')).toBeVisible();
+
+  // The held seats look selected (ticked), not "yours", and the bar offers to continue.
+  await expect(seat(page, 'D', 3)).toHaveAttribute('aria-label', /on hold for you/);
+  await expect(seat(page, 'D', 3)).toHaveAttribute('aria-pressed', 'true');
+  const bar = page.locator('.hold-bar');
+  await expect(bar).toBeVisible();
+  await expect(bar).toContainText('House seating (D3, D4)');
+  await expect(bar.getByRole('timer')).toContainText(/On hold for you · [0-2]:\d\d/);
+  await expect(bar).toContainText('₹1,598');
+
+  // Tapping a held seat doesn't unselect it or start a second booking.
+  await seat(page, 'D', 3).click();
+  await expect(page.locator('.toast')).toContainText('continue to payment');
+
+  await bar.getByRole('button', { name: 'CONTINUE TO PAYMENT' }).click();
+  await expect(page).toHaveURL(checkoutUrl);
+  await expect(page.getByRole('timer')).toBeVisible();
+
+  // Releasing from the seat map frees them for everyone.
+  await page.goBack();
+  await page.locator('.hold-bar').getByRole('button', { name: 'release' }).click();
+  await expect(page.locator('.hold-bar')).toHaveCount(0);
+  await expect(seat(page, 'D', 3)).toHaveAttribute('aria-label', /available/);
+});
+
 test('standing section: pick a quantity, not a seat', async ({ page, request }) => {
   const show = await demoShow(request, 'arena');
   await page.goto(`/events/${show}`);
