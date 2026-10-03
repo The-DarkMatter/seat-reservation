@@ -1,7 +1,8 @@
 # TLS from Let's Encrypt, automatically. Cloudflare is DNS-only (grey cloud) for
 # this hostname, so a load test reaches this box directly instead of being
 # challenged or throttled by a proxy in between.
-{$DOMAIN} {
+# UI_DOMAIN is the Kursi UI's own hostname; both names serve the same app.
+{$DOMAIN} {$UI_DOMAIN:kursi.amogh.cloud} {
 	encode zstd gzip
 
 	reverse_proxy app:8080 {
