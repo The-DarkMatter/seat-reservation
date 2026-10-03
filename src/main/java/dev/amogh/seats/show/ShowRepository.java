@@ -143,6 +143,52 @@ public class ShowRepository {
                 .list();
     }
 
+    /** Per-section counts of one show, as listed by {@link #countRecentShows}. */
+    public record SectionCount(String showId, String section, int available, int held, int confirmed) {
+    }
+
+    /**
+     * Counts per (show, section) for the newest visible shows of a kind, in one
+     * statement. Shows come back newest first.
+     */
+    public List<SectionCount> countRecentShows(String kind, int limit) {
+        return jdbc.sql("""
+                SELECT s.id, se.section,
+                       SUM(se.status = 'available' OR (se.status = 'held' AND se.held_until <= NOW(6))),
+                       SUM(se.status = 'held' AND se.held_until > NOW(6)),
+                       SUM(se.status = 'confirmed')
+                FROM (SELECT id, created_at FROM shows
+                      WHERE kind = ? AND hidden = FALSE ORDER BY created_at DESC LIMIT ?) s
+                JOIN seats se ON se.show_id = s.id
+                GROUP BY s.id, s.created_at, se.section
+                ORDER BY s.created_at DESC
+                """)
+                .params(kind, limit)
+                .query((rs, n) -> new SectionCount(rs.getString(1), rs.getString(2), rs.getInt(3), rs.getInt(4),
+                        rs.getInt(5)))
+                .list();
+    }
+
+    /**
+     * Every seat's effective state as one character, grouped by section, in
+     * layout order. One statement, so all sections share a snapshot.
+     */
+    public LinkedHashMap<String, StringBuilder> findSeatStateCodes(String showId) {
+        var bySection = new LinkedHashMap<String, StringBuilder>();
+        jdbc.sql("""
+                SELECT section,
+                       CASE WHEN status = 'confirmed' THEN 'c'
+                            WHEN status = 'held' AND held_until > NOW(6) THEN 'h'
+                            ELSE 'a' END
+                FROM seats WHERE show_id = ? ORDER BY idx
+                """)
+                .param(showId)
+                .query(rs -> {
+                    bySection.computeIfAbsent(rs.getString(1), k -> new StringBuilder()).append(rs.getString(2));
+                });
+        return bySection;
+    }
+
     static LocalDateTime toUtc(Instant instant) {
         return instant == null ? null : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
     }

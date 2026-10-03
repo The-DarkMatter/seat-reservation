@@ -239,6 +239,11 @@ public class ReservationService {
         return toView(row);
     }
 
+    /** GET /me/reservations: the caller's own reservations, newest first. */
+    public List<ReservationView> listMine(String userId, String showId) {
+        return reservations.findByUser(userId, showId, 50).stream().map(ReservationService::toView).toList();
+    }
+
     /** What a cancel/confirm/expiry did, so the caller can count it after commit. */
     public record Transition(ReservationView reservation, int seatsMoved, boolean changed) {
     }
@@ -483,9 +488,11 @@ public class ReservationService {
         return ApiException.notFound("reservation_not_found", "No such reservation");
     }
 
+    /** A hold past its expiry is reported as expired, whether or not the sweeper has got to it yet. */
     static ReservationView toView(ReservationRepository.ReservationRow row) {
+        String status = row.status().equals("held") && row.holdExpired() ? "expired" : row.status();
         return new ReservationView(row.id(), row.showId(), row.userId(), row.seats(), row.amountPaise(),
-                row.status(), row.expiresAt() == null ? null : row.expiresAt().toInstant(ZoneOffset.UTC));
+                status, status.equals("held") ? row.expiresAt().toInstant(ZoneOffset.UTC) : null);
     }
 
     private static void sleepQuietly(long millis) {

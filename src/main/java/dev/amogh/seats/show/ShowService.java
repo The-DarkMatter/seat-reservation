@@ -1,5 +1,6 @@
 package dev.amogh.seats.show;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -9,6 +10,9 @@ import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 
 import dev.amogh.seats.show.CreateShowRequest.RowSpec;
 import dev.amogh.seats.show.CreateShowRequest.SectionSpec;
@@ -33,9 +37,26 @@ public class ShowService {
     static final Pattern SECTION_CODE = Pattern.compile("[A-Z0-9]{1,12}");
     static final Pattern ROW_NAME = Pattern.compile("[A-Z]{1,3}");
 
+    static final int MAX_LIST = 50;
+
     private final ShowRepository repository;
     private final ShowCatalog catalog;
     private final JsonMapper json;
+
+    /**
+     * Seat maps are polled by every open browser. Caching each one for half a
+     * second means N viewers cost about two DB reads per second, not N. Caffeine
+     * computes a missing entry once while concurrent callers wait for it, so a
+     * crowd arriving at once doesn't stampede MySQL either.
+     */
+    private final Cache<String, SeatMap> seatMaps = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofMillis(500))
+            .maximumSize(1000)
+            .build();
+    private final Cache<String, List<ShowSummary>> listings = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofSeconds(1))
+            .maximumSize(20)
+            .build();
 
     public ShowService(ShowRepository repository, ShowCatalog catalog, JsonMapper json) {
         this.repository = repository;
@@ -90,6 +111,71 @@ public class ShowService {
     public ShowView get(String showId) {
         Show show = catalog.require(showId);
         return toView(show, repository.findSeatStates(show.id()));
+    }
+
+    /** GET /shows: the newest visible shows of a kind (featured events by default). */
+    public List<ShowSummary> list(String kind, int limit) {
+        if (!kind.equals("featured") && !kind.equals("api")) {
+            throw ApiException.badRequest("invalid_kind", "kind must be featured or api");
+        }
+        if (limit < 1 || limit > MAX_LIST) {
+            throw ApiException.badRequest("invalid_limit", "limit must be between 1 and " + MAX_LIST);
+        }
+        return listings.get(kind + ":" + limit, k -> loadList(kind, limit));
+    }
+
+    private List<ShowSummary> loadList(String kind, int limit) {
+        var countsByShow = new LinkedHashMap<String, Map<String, int[]>>();
+        for (var row : repository.countRecentShows(kind, limit)) {
+            countsByShow.computeIfAbsent(row.showId(), k -> new LinkedHashMap<>())
+                    .put(row.section(), new int[] {row.available(), row.held(), row.confirmed()});
+        }
+        var out = new ArrayList<ShowSummary>();
+        countsByShow.forEach((id, counts) -> {
+            Show show = catalog.require(id);
+            int[] all = new int[3];
+            var sections = new ArrayList<ShowView.SectionView>();
+            for (Section s : show.sections()) {
+                int[] c = counts.getOrDefault(s.code(), new int[3]);
+                for (int i = 0; i < 3; i++) {
+                    all[i] += c[i];
+                }
+                sections.add(new ShowView.SectionView(s.code(), s.name(), s.pricePaise(), s.standing(), s.capacity(),
+                        ShowView.Counts.of(c), null, s.display()));
+            }
+            out.add(new ShowSummary(show.id(), show.name(), show.venue(), show.startsAt(), show.pricePaise(),
+                    show.holdTtlSeconds(), show.totalSeats(), ShowView.Counts.of(all), sections));
+        });
+        return List.copyOf(out);
+    }
+
+    /** GET /shows/{id}/seatmap, at most half a second old. */
+    public SeatMap seatMap(String showId) {
+        Show show = catalog.require(showId);
+        return seatMaps.get(show.id(), id -> loadSeatMap(show));
+    }
+
+    private SeatMap loadSeatMap(Show show) {
+        var states = repository.findSeatStateCodes(show.id());
+        int[] all = new int[3];
+        var sections = new ArrayList<SeatMap.SectionState>();
+        for (Section s : show.sections()) {
+            CharSequence codes = states.getOrDefault(s.code(), new StringBuilder());
+            int[] c = new int[3];
+            for (int i = 0; i < codes.length(); i++) {
+                c[switch (codes.charAt(i)) {
+                    case 'a' -> 0;
+                    case 'h' -> 1;
+                    default -> 2;
+                }]++;
+            }
+            for (int i = 0; i < 3; i++) {
+                all[i] += c[i];
+            }
+            sections.add(new SeatMap.SectionState(s.code(), ShowView.Counts.of(c),
+                    s.standing() ? null : codes.toString()));
+        }
+        return new SeatMap(show.id(), ShowView.Counts.of(all), List.copyOf(sections));
     }
 
     static ShowView toView(Show show, List<ShowView.SeatView> seats) {

@@ -171,23 +171,40 @@ public class ReservationRepository {
         return find(id, false);
     }
 
+    private static final String ROW_COLUMNS = """
+            SELECT id, show_id, user_id, seats, amount_paise, status, expires_at,
+                   (expires_at IS NOT NULL AND expires_at <= NOW(6)) AS hold_expired
+            FROM reservations
+            """;
+
     private Optional<ReservationRow> find(String id, boolean lock) {
-        return jdbc.sql("""
-                SELECT id, show_id, user_id, seats, amount_paise, status, expires_at,
-                       (expires_at IS NOT NULL AND expires_at <= NOW(6)) AS hold_expired
-                FROM reservations WHERE id = ?
-                """ + (lock ? " FOR UPDATE" : ""))
+        return jdbc.sql(ROW_COLUMNS + " WHERE id = ?" + (lock ? " FOR UPDATE" : ""))
                 .param(id)
-                .query((rs, n) -> new ReservationRow(
-                        rs.getString("id"),
-                        rs.getString("show_id"),
-                        rs.getString("user_id"),
-                        json.readValue(rs.getString("seats"), STRING_LIST),
-                        rs.getLong("amount_paise"),
-                        rs.getString("status"),
-                        rs.getObject("expires_at", LocalDateTime.class),
-                        rs.getBoolean("hold_expired")))
+                .query(this::toRow)
                 .optional();
+    }
+
+    /** A user's reservations, newest first; optionally just one show's. */
+    public List<ReservationRow> findByUser(String userId, String showId, int limit) {
+        return jdbc.sql(ROW_COLUMNS + " WHERE user_id = :user AND (:show IS NULL OR show_id = :show)"
+                        + " ORDER BY created_at DESC LIMIT :limit")
+                .param("user", userId)
+                .param("show", showId)
+                .param("limit", limit)
+                .query(this::toRow)
+                .list();
+    }
+
+    private ReservationRow toRow(java.sql.ResultSet rs, int n) throws java.sql.SQLException {
+        return new ReservationRow(
+                rs.getString("id"),
+                rs.getString("show_id"),
+                rs.getString("user_id"),
+                json.readValue(rs.getString("seats"), STRING_LIST),
+                rs.getLong("amount_paise"),
+                rs.getString("status"),
+                rs.getObject("expires_at", LocalDateTime.class),
+                rs.getBoolean("hold_expired"));
     }
 
     /**

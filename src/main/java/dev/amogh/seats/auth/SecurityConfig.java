@@ -47,7 +47,7 @@ public class SecurityConfig {
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/auth/token").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/", "/shows/*", "/health", "/health/**",
+                        .requestMatchers(HttpMethod.GET, "/", "/shows", "/shows/*", "/shows/*/seatmap", "/health", "/health/**",
                                 "/metrics", "/info").permitAll()
                         .requestMatchers("/error").permitAll()
                         .requestMatchers(HttpMethod.POST, "/shows").hasAuthority("SCOPE_admin")
