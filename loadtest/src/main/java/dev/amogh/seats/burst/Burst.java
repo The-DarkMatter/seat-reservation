@@ -56,6 +56,8 @@ public final class Burst {
 
     private final Config cfg;
     private final Http http;
+    /** Separate client so the invariant poller isn't queued behind the burst's in-flight cap. */
+    private final Http pollHttp;
     private final String run = UUID.randomUUID().toString().substring(0, 6);
     private final Random random = new Random();
     private final List<Attempt> attempts = Collections.synchronizedList(new ArrayList<>());
@@ -69,6 +71,7 @@ public final class Burst {
     private Burst(Config cfg) {
         this.cfg = cfg;
         this.http = new Http(cfg.baseUrl(), cfg.concurrency());
+        this.pollHttp = new Http(cfg.baseUrl(), 2);
     }
 
     public static void main(String[] args) throws Exception {
@@ -523,7 +526,7 @@ public final class Burst {
 
     private void pollInvariant(String show, int total, AtomicBoolean stop, AtomicInteger polls, List<String> drift) {
         while (!stop.get()) {
-            var r = http.get("/shows/" + show, null);
+            var r = pollHttp.get("/shows/" + show, null);
             if (r.status() == 200) {
                 var c = r.body().get("counts");
                 int sum = c.get("available").asInt() + c.get("held").asInt() + c.get("confirmed").asInt();
