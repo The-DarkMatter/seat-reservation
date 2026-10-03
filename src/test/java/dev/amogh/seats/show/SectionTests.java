@@ -15,6 +15,7 @@ import dev.amogh.seats.ApiClient;
 import dev.amogh.seats.IntegrationTest;
 import dev.amogh.seats.reservation.ReservationService;
 import dev.amogh.seats.reservation.ReserveResult;
+import dev.amogh.seats.reservation.SeatRequest;
 import dev.amogh.seats.show.CreateShowRequest.RowSpec;
 import dev.amogh.seats.show.CreateShowRequest.SectionSpec;
 import dev.amogh.seats.web.ApiException;
@@ -66,13 +67,17 @@ class SectionTests {
     void reservationPriceIsTheSumOfEachSeatsSection() {
         var show = shows.create(arena("pricing"));
 
-        var result = reservations.reserve("priya", show.id(), List.of("GOLD-X3", "SILVER-007"), null);
+        var seated = reservations.reserve("priya", show.id(), List.of("GOLD-X3", "GOLD-Y1"), null);
+        var standing = reservations.reserve("priya", show.id(), new SeatRequest.Standing("SILVER", 2), null);
 
-        assertThat(result).isInstanceOfSatisfying(ReserveResult.Reserved.class,
-                r -> assertThat(r.reservation().amountPaise()).isEqualTo(680000L + 349900L));
+        assertThat(seated).isInstanceOfSatisfying(ReserveResult.Reserved.class,
+                r -> assertThat(r.reservation().amountPaise()).isEqualTo(2 * 680000L));
+        assertThat(standing).isInstanceOfSatisfying(ReserveResult.Reserved.class,
+                r -> assertThat(r.reservation().amountPaise()).isEqualTo(2 * 349900L));
         var after = shows.get(show.id());
-        assertThat(after.sections().getFirst().counts()).isEqualTo(new ShowView.Counts(37, 0, 1));
-        assertThat(after.counts()).isEqualTo(new ShowView.Counts(186, 0, 2));
+        assertThat(after.sections().getFirst().counts()).isEqualTo(new ShowView.Counts(36, 0, 2));
+        assertThat(after.sections().get(1).counts()).isEqualTo(new ShowView.Counts(148, 0, 2));
+        assertThat(after.counts()).isEqualTo(new ShowView.Counts(184, 0, 4));
     }
 
     @Test

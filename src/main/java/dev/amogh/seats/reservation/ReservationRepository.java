@@ -130,6 +130,27 @@ public class ReservationRepository {
                 .optional();
     }
 
+    /**
+     * Standing sections: lock up to {@code quantity} free places, skipping any
+     * that another transaction has locked right now.
+     *
+     * SKIP LOCKED is right here and wrong for named seats. Any free place will
+     * do, so stepping past a locked one loses nothing, and the query never
+     * waits on a seat row, so it can't join a lock queue or a deadlock. For a
+     * named seat, skipping could leave the seat with no winner at all if the
+     * transaction holding it then rolls back. The cost here is the mirror of
+     * that: a place locked by a request that later rolls back counts as taken
+     * for this one instant, so a nearly-full section can say "sold out" a
+     * moment early. Returned rows are locked, so the caller's claim can't fail.
+     */
+    public List<String> lockFreeStandingPlaces(String showId, String section, int quantity) {
+        return jdbc.sql("SELECT label FROM seats WHERE show_id = ? AND section = ? AND " + CLAIMABLE
+                        + " ORDER BY idx LIMIT ? FOR UPDATE SKIP LOCKED")
+                .params(showId, section, quantity)
+                .query(String.class)
+                .list();
+    }
+
     public void insertReservation(String id, String showId, String userId, List<String> seats,
                                   long amountPaise, String status, LocalDateTime expiresAt) {
         jdbc.sql("""

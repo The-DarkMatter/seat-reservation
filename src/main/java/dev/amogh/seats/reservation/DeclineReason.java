@@ -13,7 +13,9 @@ public enum DeclineReason {
     /** A retry of an earlier request: nothing new happened, the stored outcome was returned. */
     IDEMPOTENT_REPLAY("idempotent_replay"),
     /** The idempotency key was already used for a different request. */
-    IDEMPOTENCY_KEY_REUSE("idempotency_key_reuse");
+    IDEMPOTENCY_KEY_REUSE("idempotency_key_reuse"),
+    /** A standing section doesn't have as many free places as were asked for. */
+    SECTION_SOLD_OUT("section_sold_out");
 
     private final String code;
 

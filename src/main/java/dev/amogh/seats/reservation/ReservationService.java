@@ -29,6 +29,7 @@ import dev.amogh.seats.obs.ReservationMetrics;
 import dev.amogh.seats.reservation.ReserveResult.Declined;
 import dev.amogh.seats.reservation.ReserveResult.Replayed;
 import dev.amogh.seats.reservation.ReserveResult.Reserved;
+import dev.amogh.seats.show.Section;
 import dev.amogh.seats.show.Show;
 import dev.amogh.seats.show.ShowCatalog;
 import dev.amogh.seats.web.ApiException;
@@ -86,23 +87,32 @@ public class ReservationService {
         this.tx.setTimeout(15);
     }
 
+    /** Books specific seats by label. */
     public ReserveResult reserve(String userId, String showId, List<String> requestedSeats, String idempotencyKey) {
+        return reserve(userId, showId, new SeatRequest.Named(requestedSeats), idempotencyKey);
+    }
+
+    public ReserveResult reserve(String userId, String showId, SeatRequest request, String idempotencyKey) {
         Show show = catalog.require(showId);
-        List<String> seats = validateSeats(show, requestedSeats);
+        SeatRequest ask = validate(show, request);
         String key = validateKey(idempotencyKey);
-        String fingerprint = fingerprint(show.id(), seats);
+        String fingerprint = fingerprint(show.id(), ask);
 
         Timer.Sample timer = metrics.startTimer();
         long start = System.nanoTime();
         ReserveResult result = withRetry(() ->
-                tx.execute(status -> reserveOnce(status, userId, show, seats, key, fingerprint)));
-        record(result, userId, show, seats, timer, start);
+                tx.execute(status -> reserveOnce(status, userId, show, ask, key, fingerprint)));
+        record(result, userId, show, ask, timer, start);
         return result;
     }
 
     /** Runs after commit: counters and the log line only ever describe what the database kept. */
-    private void record(ReserveResult result, String userId, Show show, List<String> seats,
+    private void record(ReserveResult result, String userId, Show show, SeatRequest ask,
                         Timer.Sample timer, long start) {
+        String seats = switch (ask) {
+            case SeatRequest.Named named -> String.join(",", named.seats());
+            case SeatRequest.Standing standing -> standing.section() + " x" + standing.quantity();
+        };
         String outcome;
         String reason = null;
         String reservationId = null;
@@ -110,7 +120,8 @@ public class ReservationService {
             case Reserved r -> {
                 outcome = r.reservation().status();
                 reservationId = r.reservation().reservationId();
-                metrics.reserved(r.reservation().status(), seats.size());
+                seats = String.join(",", r.reservation().seats());
+                metrics.reserved(r.reservation().status(), r.reservation().seats().size());
             }
             case Declined d -> {
                 outcome = "declined";
@@ -130,14 +141,14 @@ public class ReservationService {
                 .addKeyValue("reason", reason)
                 .addKeyValue("show_id", show.id())
                 .addKeyValue("user_id", userId)
-                .addKeyValue("seats", String.join(",", seats))
+                .addKeyValue("seats", seats)
                 .addKeyValue("reservation_id", reservationId)
                 .addKeyValue("http_status", result.httpStatus())
                 .addKeyValue("duration_ms", (System.nanoTime() - start) / 1_000_000)
                 .log("reserve {} {}", outcome, reason == null ? "" : reason);
     }
 
-    private ReserveResult reserveOnce(TransactionStatus status, String userId, Show show, List<String> seats,
+    private ReserveResult reserveOnce(TransactionStatus status, String userId, Show show, SeatRequest ask,
                                       String key, String fingerprint) {
         if (key != null && !idempotency.tryClaim(userId, key, fingerprint)) {
             var stored = idempotency.find(userId, key)
@@ -150,7 +161,7 @@ public class ReservationService {
         }
 
         Object savepoint = status.createSavepoint();
-        ReserveResult result = claim(userId, show, seats);
+        ReserveResult result = claim(userId, show, ask);
         if (result instanceof Declined) {
             status.rollbackToSavepoint(savepoint);
         } else {
@@ -162,19 +173,21 @@ public class ReservationService {
         return result;
     }
 
-    private ReserveResult claim(String userId, Show show, List<String> seats) {
-        var visiblyTaken = reservations.firstUnavailable(show.id(), seats);
-        if (visiblyTaken.isPresent()) {
-            return seatTaken(visiblyTaken.get());
+    private ReserveResult claim(String userId, Show show, SeatRequest ask) {
+        if (ask instanceof SeatRequest.Named(var named)) {
+            var visiblyTaken = reservations.firstUnavailable(show.id(), named);
+            if (visiblyTaken.isPresent()) {
+                return seatTaken(visiblyTaken.get());
+            }
         }
 
         reservations.lockUser(show.id(), userId);
         int alreadyHeld = reservations.countLiveSeats(show.id(), userId);
-        if (alreadyHeld + seats.size() > show.perUserLimit()) {
+        if (alreadyHeld + ask.count() > show.perUserLimit()) {
             var details = new LinkedHashMap<String, Object>();
             details.put("per_user_limit", show.perUserLimit());
             details.put("seats_held", alreadyHeld);
-            details.put("seats_requested", seats.size());
+            details.put("seats_requested", ask.count());
             return declined(DeclineReason.PER_USER_LIMIT,
                     "This would exceed the limit of " + show.perUserLimit() + " seats per user", details);
         }
@@ -183,11 +196,29 @@ public class ReservationService {
         LocalDateTime heldUntil = show.usesHolds() ? reservations.dbNowPlusSeconds(show.holdTtlSeconds()) : null;
         String reservationId = UUID.randomUUID().toString();
 
-        // Sorted order is the deadlock-avoidance rule: two requests for {A12, A13}
-        // and {A13, A12} both lock A12 first, so neither can hold what the other needs.
-        for (String seat : seats.stream().sorted().toList()) {
-            if (!reservations.claimSeat(show.id(), seat, reservationId, userId, seatStatus, heldUntil)) {
-                return seatTaken(seat);
+        List<String> seats;
+        switch (ask) {
+            case SeatRequest.Named named -> {
+                // Sorted order is the deadlock-avoidance rule: two requests for {A12, A13}
+                // and {A13, A12} both lock A12 first, so neither can hold what the other needs.
+                for (String seat : named.seats().stream().sorted().toList()) {
+                    if (!reservations.claimSeat(show.id(), seat, reservationId, userId, seatStatus, heldUntil)) {
+                        return seatTaken(seat);
+                    }
+                }
+                seats = named.seats();
+            }
+            case SeatRequest.Standing standing -> {
+                // Any free places will do: lock some (skipping ones others hold), then claim them.
+                seats = reservations.lockFreeStandingPlaces(show.id(), standing.section(), standing.quantity());
+                if (seats.size() < standing.quantity()) {
+                    return sectionSoldOut(show.section(standing.section()).orElseThrow(), standing, seats.size());
+                }
+                for (String seat : seats) {
+                    if (!reservations.claimSeat(show.id(), seat, reservationId, userId, seatStatus, heldUntil)) {
+                        throw new IllegalStateException("locked standing place " + seat + " was not claimable");
+                    }
+                }
             }
         }
 
@@ -339,12 +370,39 @@ public class ReservationService {
                 Map.of("seats", List.of(seat)));
     }
 
+    private Declined sectionSoldOut(Section section, SeatRequest.Standing standing, int free) {
+        var details = new LinkedHashMap<String, Object>();
+        details.put("section", section.code());
+        details.put("available", free);
+        details.put("requested", standing.quantity());
+        return declined(DeclineReason.SECTION_SOLD_OUT,
+                free == 0 ? section.name() + " is sold out" : "Only " + free + " places left in " + section.name(),
+                details);
+    }
+
     private Declined declined(DeclineReason reason, String message, Map<String, Object> details) {
         var body = new LinkedHashMap<String, Object>();
         body.put("error", reason.code());
         body.put("message", message);
         body.putAll(details);
         return new Declined(reason, json.writeValueAsString(body));
+    }
+
+    private static SeatRequest validate(Show show, SeatRequest request) {
+        return switch (request) {
+            case SeatRequest.Named named -> new SeatRequest.Named(validateSeats(show, named.seats()));
+            case SeatRequest.Standing standing -> {
+                if (show.section(standing.section()).filter(Section::standing).isEmpty()) {
+                    throw ApiException.badRequest("unknown_section", "this show has no standing section by that code",
+                            Map.of("section", standing.section()));
+                }
+                if (standing.quantity() < 1 || standing.quantity() > MAX_SEATS_PER_REQUEST) {
+                    throw ApiException.badRequest("invalid_quantity",
+                            "quantity must be between 1 and " + MAX_SEATS_PER_REQUEST);
+                }
+                yield standing;
+            }
+        };
     }
 
     private static List<String> validateSeats(Show show, List<String> seats) {
@@ -373,6 +431,14 @@ public class ReservationService {
             throw ApiException.badRequest("unknown_seats", "these seats don't exist in this show",
                     Map.of("seats", unknown));
         }
+        for (String seat : seats) {
+            Section section = show.sectionOf(seat);
+            if (section.standing()) {
+                throw ApiException.badRequest("standing_section",
+                        "places in a standing section are booked by quantity, not by label",
+                        Map.of("section", section.code()));
+            }
+        }
         return List.copyOf(seats);
     }
 
@@ -389,7 +455,16 @@ public class ReservationService {
 
     /** Same show + same set of seats = same request, regardless of seat order. */
     static String fingerprint(String showId, List<String> seats) {
-        String canonical = showId + "\n" + String.join(",", seats.stream().sorted().toList());
+        return fingerprint(showId, new SeatRequest.Named(seats));
+    }
+
+    /** Labels can't contain ':', so a standing request can never collide with a named one. */
+    static String fingerprint(String showId, SeatRequest ask) {
+        String what = switch (ask) {
+            case SeatRequest.Named named -> String.join(",", named.seats().stream().sorted().toList());
+            case SeatRequest.Standing standing -> "standing:" + standing.section() + ":" + standing.quantity();
+        };
+        String canonical = showId + "\n" + what;
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest);

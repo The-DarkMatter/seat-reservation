@@ -33,7 +33,7 @@ public class ReservationController {
                                           @RequestBody ReserveRequest body,
                                           @AuthenticationPrincipal Jwt jwt) {
         String key = resolveKey(headerKey, body.idempotencyKey());
-        ReserveResult result = service.reserve(jwt.getSubject(), showId, body.seats(), key);
+        ReserveResult result = service.reserve(jwt.getSubject(), showId, toSeatRequest(body), key);
 
         var response = ResponseEntity.status(result.httpStatus()).contentType(MediaType.APPLICATION_JSON);
         if (result instanceof ReserveResult.Replayed) {
@@ -56,6 +56,19 @@ public class ReservationController {
     @PostMapping("/reservations/{reservationId}/confirm")
     public ReservationView confirm(@PathVariable String reservationId, @AuthenticationPrincipal Jwt jwt) {
         return service.confirm(jwt.getSubject(), reservationId).reservation();
+    }
+
+    private static SeatRequest toSeatRequest(ReserveRequest body) {
+        if (body.section() == null && body.quantity() == null) {
+            return new SeatRequest.Named(body.seats());
+        }
+        if (body.seats() != null) {
+            throw ApiException.badRequest("invalid_seats", "send either seats or section + quantity, not both");
+        }
+        if (body.section() == null || body.quantity() == null) {
+            throw ApiException.badRequest("invalid_quantity", "a standing booking needs both section and quantity");
+        }
+        return new SeatRequest.Standing(body.section(), body.quantity());
     }
 
     private static String resolveKey(String header, String body) {
