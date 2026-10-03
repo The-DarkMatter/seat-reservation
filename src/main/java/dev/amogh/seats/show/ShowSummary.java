@@ -3,6 +3,8 @@ package dev.amogh.seats.show;
 import java.time.Instant;
 import java.util.List;
 
+import tools.jackson.databind.JsonNode;
+
 /** One entry of GET /shows: what an event listing needs, without the per-seat detail. */
 public record ShowSummary(
         String id,
@@ -13,5 +15,6 @@ public record ShowSummary(
         Integer holdTtlSeconds,
         int totalSeats,
         ShowView.Counts counts,
-        List<ShowView.SectionView> sections) {
+        List<ShowView.SectionView> sections,
+        JsonNode layout) {
 }

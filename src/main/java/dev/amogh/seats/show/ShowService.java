@@ -144,7 +144,7 @@ public class ShowService {
                         ShowView.Counts.of(c), null, s.display()));
             }
             out.add(new ShowSummary(show.id(), show.name(), show.venue(), show.startsAt(), show.pricePaise(),
-                    show.holdTtlSeconds(), show.totalSeats(), ShowView.Counts.of(all), sections));
+                    show.holdTtlSeconds(), show.totalSeats(), ShowView.Counts.of(all), sections, show.layout()));
         });
         return List.copyOf(out);
     }

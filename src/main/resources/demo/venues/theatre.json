@@ -22,7 +22,7 @@
           { "row": "C", "seats": 22, "aisles_after": [5, 17] }, { "row": "D", "seats": 22, "aisles_after": [5, 17] },
           { "row": "E", "seats": 22, "aisles_after": [5, 17] }, { "row": "F", "seats": 22, "aisles_after": [5, 17] }
         ],
-        "display": { "color": "#C4B5F6", "curve": 0.12, "points": [[300, 130], [700, 130], [740, 250], [260, 250]] }
+        "display": { "color": "#C4B5F6", "curve": 0.06, "points": [[300, 130], [700, 130], [740, 250], [260, 250]] }
       },
       {
         "code": "GOLD", "name": "Gold", "price_paise": 179900,
@@ -32,7 +32,7 @@
           { "row": "L", "seats": 26, "aisles_after": [6, 20] }, { "row": "M", "seats": 26, "aisles_after": [6, 20] },
           { "row": "N", "seats": 26, "aisles_after": [6, 20] }, { "row": "P", "seats": 26, "aisles_after": [6, 20] }
         ],
-        "display": { "color": "#F3C978", "curve": 0.12, "points": [[250, 270], [750, 270], [790, 420], [210, 420]] }
+        "display": { "color": "#F3C978", "curve": 0.06, "points": [[250, 270], [750, 270], [790, 420], [210, 420]] }
       },
       {
         "code": "BALCONY", "name": "Balcony", "price_paise": 89900,
@@ -42,7 +42,7 @@
           { "row": "E", "seats": 30, "aisles_after": [7, 23] }, { "row": "F", "seats": 30, "aisles_after": [7, 23] },
           { "row": "G", "seats": 30, "aisles_after": [7, 23] }
         ],
-        "display": { "color": "#F5B5C4", "curve": 0.12, "points": [[200, 460], [800, 460], [840, 620], [160, 620]] }
+        "display": { "color": "#F5B5C4", "curve": 0.06, "points": [[200, 460], [800, 460], [840, 620], [160, 620]] }
       }
     ]
   }

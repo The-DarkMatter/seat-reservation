@@ -9,3 +9,5 @@ ops/
 deploy/
 *.md
 !loadtest/
+web/node_modules/
+web/dist/

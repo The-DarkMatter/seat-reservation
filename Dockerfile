@@ -1,5 +1,13 @@
 # syntax=docker/dockerfile:1
 
+# ---- web: the Kursi UI (static files) -------------------------------------------
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+COPY web ./
+RUN npm run build
+
 # ---- build -------------------------------------------------------------------
 # Runs on the builder's native platform even when targeting arm64: Java
 # bytecode is portable, so only the runtime stage needs the target arch.
@@ -11,6 +19,8 @@ COPY mvnw pom.xml ./
 RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -q dependency:go-offline
 
 COPY src src
+# The UI is served by the same app, from classpath:/static.
+COPY --from=web /web/dist src/main/resources/static
 RUN --mount=type=cache,target=/root/.m2 ./mvnw -B -q -DskipTests package \
  && java -Djarmode=tools -jar target/seat-reservation-*.jar extract --layers --launcher --destination /extracted
 

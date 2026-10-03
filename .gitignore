@@ -31,3 +31,11 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Kursi UI ###
+web/node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/
+# built into the jar by the Dockerfile; never committed
+src/main/resources/static/
