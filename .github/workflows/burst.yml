@@ -1,0 +1,33 @@
+name: live burst
+
+# Run the on-sale stampede against the live deployment (or any URL) from a
+# datacenter network, with the full report in the job log:
+#   Actions -> live burst -> Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Service to hit
+        default: https://seats.amogh.cloud
+      args:
+        description: Extra burst options
+        default: "--stampede 15000 --concurrency 1000"
+
+jobs:
+  burst:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Raise client socket limits
+        run: |
+          sudo sysctl -w net.ipv4.ip_local_port_range="10240 65535"
+          ulimit -n 65536
+      - name: Burst
+        run: |
+          ulimit -n 65536
+          ./burst.sh "${{ inputs.base_url }}" ${{ inputs.args }}
