@@ -51,6 +51,9 @@ services:
     restart: unless-stopped
 
   alloy:
+    # Enabled by deploy.sh only once Grafana Cloud credentials are in .env, so the
+    # service itself never depends on the observability vendor being configured.
+    profiles: ["cloud"]
     image: grafana/alloy:v1.10.0
     command:
       - run
@@ -58,11 +61,11 @@ services:
       - --storage.path=/var/lib/alloy/data
       - /etc/alloy/config.alloy
     environment:
-      GRAFANA_CLOUD_PROM_URL: ${GRAFANA_CLOUD_PROM_URL:?}
-      GRAFANA_CLOUD_PROM_USER: ${GRAFANA_CLOUD_PROM_USER:?}
-      GRAFANA_CLOUD_LOKI_URL: ${GRAFANA_CLOUD_LOKI_URL:?}
-      GRAFANA_CLOUD_LOKI_USER: ${GRAFANA_CLOUD_LOKI_USER:?}
-      GRAFANA_CLOUD_API_KEY: ${GRAFANA_CLOUD_API_KEY:?}
+      GRAFANA_CLOUD_PROM_URL: ${GRAFANA_CLOUD_PROM_URL:-}
+      GRAFANA_CLOUD_PROM_USER: ${GRAFANA_CLOUD_PROM_USER:-}
+      GRAFANA_CLOUD_LOKI_URL: ${GRAFANA_CLOUD_LOKI_URL:-}
+      GRAFANA_CLOUD_LOKI_USER: ${GRAFANA_CLOUD_LOKI_USER:-}
+      GRAFANA_CLOUD_API_KEY: ${GRAFANA_CLOUD_API_KEY:-}
       MYSQL_EXPORTER_DSN: "seats:${DB_PASSWORD}@(mysql:3306)/"
       INSTANCE: ${INSTANCE_NAME:-oracle-a1}
     volumes:

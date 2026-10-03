@@ -10,7 +10,12 @@ REF="${2:-$TAG}"
 cd /opt/seats
 
 compose() {
-  docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml "$@"
+  local profiles=()
+  # Ship metrics/logs to Grafana Cloud only once it's configured.
+  if grep -q '^GRAFANA_CLOUD_API_KEY=glc_' .env 2>/dev/null; then
+    profiles=(--profile cloud)
+  fi
+  docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml "${profiles[@]}" "$@"
 }
 
 wait_ready() {
