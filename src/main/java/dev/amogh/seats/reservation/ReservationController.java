@@ -47,6 +47,17 @@ public class ReservationController {
         return service.get(jwt.getSubject(), reservationId);
     }
 
+    @PostMapping("/reservations/{reservationId}/cancel")
+    public ReservationView cancel(@PathVariable String reservationId, @AuthenticationPrincipal Jwt jwt) {
+        return service.cancel(jwt.getSubject(), reservationId).reservation();
+    }
+
+    /** Only meaningful on hold-mode shows: confirms a live hold (the "payment succeeded" step). */
+    @PostMapping("/reservations/{reservationId}/confirm")
+    public ReservationView confirm(@PathVariable String reservationId, @AuthenticationPrincipal Jwt jwt) {
+        return service.confirm(jwt.getSubject(), reservationId).reservation();
+    }
+
     private static String resolveKey(String header, String body) {
         if (header != null && body != null && !header.equals(body)) {
             throw ApiException.badRequest("idempotency_key_mismatch",

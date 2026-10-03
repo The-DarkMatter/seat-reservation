@@ -152,6 +152,84 @@ public class ReservationService {
         return toView(row);
     }
 
+    /** What a cancel/confirm/expiry did, so the caller can count it after commit. */
+    public record Transition(ReservationView reservation, int seatsMoved, boolean changed) {
+    }
+
+    /**
+     * Owner-only. Lock order: the reservation row, then its seats (label order).
+     * Cancelling twice is a no-op that returns the same state. The release
+     * itself is guarded by reservation_id, so it can only ever free seats this
+     * reservation still owns; a seat that expired and was re-booked by someone
+     * else is untouched.
+     */
+    public Transition cancel(String userId, String reservationId) {
+        return withRetry(() -> tx.execute(status -> {
+            var row = reservations.findForUpdate(reservationId).orElseThrow(ReservationService::reservationNotFound);
+            requireOwner(row, userId);
+            if (row.status().equals("cancelled") || row.status().equals("expired")) {
+                return new Transition(toView(row), 0, false);
+            }
+            int released = reservations.releaseSeats(row.id());
+            reservations.setStatus(row.id(), "cancelled");
+            return new Transition(toView(row).withStatus("cancelled"), released, true);
+        }));
+    }
+
+    /**
+     * Owner-only: turns a live hold into a sale (the "payment succeeded" step).
+     * Idempotent: confirming a confirmed reservation returns it unchanged, so a
+     * retried payment callback can never sell or charge twice. A hold that ran
+     * out is 409 hold_expired; who wins a confirm-vs-rebook race at the expiry
+     * instant is decided by the database clock inside the UPDATE.
+     */
+    public Transition confirm(String userId, String reservationId) {
+        return withRetry(() -> tx.execute(status -> {
+            var row = reservations.findForUpdate(reservationId).orElseThrow(ReservationService::reservationNotFound);
+            requireOwner(row, userId);
+            return switch (row.status()) {
+                case "confirmed" -> new Transition(toView(row), 0, false);
+                case "cancelled" -> throw ApiException.conflict("reservation_cancelled",
+                        "This reservation was cancelled");
+                case "expired" -> throw holdExpired();
+                case "held" -> {
+                    int confirmed = reservations.confirmSeats(row.id());
+                    if (confirmed != row.seats().size()) {
+                        // Throwing rolls back the transaction, so a partial confirm can't stick.
+                        throw holdExpired();
+                    }
+                    reservations.setStatus(row.id(), "confirmed");
+                    yield new Transition(toView(row).withStatus("confirmed"), confirmed, true);
+                }
+                default -> throw new IllegalStateException("unknown reservation status " + row.status());
+            };
+        }));
+    }
+
+    /**
+     * Expires ONE overdue hold, if any. The sweeper calls this in a loop. One
+     * reservation per transaction keeps the lock order identical to cancel's
+     * (reservation row, then its seats in label order). SKIP LOCKED steps
+     * around holds that a confirm or cancel is working on right now.
+     * Returns null when there's nothing left to expire.
+     */
+    public Transition expireOneOverdueHold() {
+        return withRetry(() -> tx.execute(status -> {
+            var ids = reservations.lockExpiredHolds(1);
+            if (ids.isEmpty()) {
+                return null;
+            }
+            var row = reservations.find(ids.getFirst()).orElseThrow();
+            int released = reservations.releaseExpiredSeats(row.id());
+            reservations.setStatus(row.id(), "expired");
+            return new Transition(toView(row).withStatus("expired"), released, true);
+        }));
+    }
+
+    private static ApiException holdExpired() {
+        return ApiException.conflict("hold_expired", "The hold expired before it was confirmed");
+    }
+
     // ---- helpers -------------------------------------------------------------
 
     /**
