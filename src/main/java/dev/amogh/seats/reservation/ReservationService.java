@@ -25,12 +25,14 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import dev.amogh.seats.obs.ReservationMetrics;
 import dev.amogh.seats.reservation.ReserveResult.Declined;
 import dev.amogh.seats.reservation.ReserveResult.Replayed;
 import dev.amogh.seats.reservation.ReserveResult.Reserved;
 import dev.amogh.seats.show.Show;
 import dev.amogh.seats.show.ShowCatalog;
 import dev.amogh.seats.web.ApiException;
+import io.micrometer.core.instrument.Timer;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -68,13 +70,16 @@ public class ReservationService {
     private final ShowCatalog catalog;
     private final TransactionTemplate tx;
     private final JsonMapper json;
+    private final ReservationMetrics metrics;
 
     public ReservationService(ReservationRepository reservations, IdempotencyRepository idempotency,
-                              ShowCatalog catalog, PlatformTransactionManager txManager, JsonMapper json) {
+                              ShowCatalog catalog, PlatformTransactionManager txManager, JsonMapper json,
+                              ReservationMetrics metrics) {
         this.reservations = reservations;
         this.idempotency = idempotency;
         this.catalog = catalog;
         this.json = json;
+        this.metrics = metrics;
         this.tx = new TransactionTemplate(txManager);
         this.tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
         this.tx.setTimeout(15);
@@ -86,7 +91,49 @@ public class ReservationService {
         String key = validateKey(idempotencyKey);
         String fingerprint = fingerprint(show.id(), seats);
 
-        return withRetry(() -> tx.execute(status -> reserveOnce(status, userId, show, seats, key, fingerprint)));
+        Timer.Sample timer = metrics.startTimer();
+        long start = System.nanoTime();
+        ReserveResult result = withRetry(() ->
+                tx.execute(status -> reserveOnce(status, userId, show, seats, key, fingerprint)));
+        record(result, userId, show, seats, timer, start);
+        return result;
+    }
+
+    /** Runs after commit: counters and the log line only ever describe what the database kept. */
+    private void record(ReserveResult result, String userId, Show show, List<String> seats,
+                        Timer.Sample timer, long start) {
+        String outcome;
+        String reason = null;
+        String reservationId = null;
+        switch (result) {
+            case Reserved r -> {
+                outcome = r.reservation().status();
+                reservationId = r.reservation().reservationId();
+                metrics.reserved(r.reservation().status(), seats.size());
+            }
+            case Declined d -> {
+                outcome = "declined";
+                reason = d.reason().code();
+                metrics.declined(d.reason());
+            }
+            case Replayed p -> {
+                outcome = "replayed";
+                reason = DeclineReason.IDEMPOTENT_REPLAY.code();
+                metrics.declined(DeclineReason.IDEMPOTENT_REPLAY);
+            }
+        }
+        metrics.stopTimer(timer, outcome);
+        log.atInfo()
+                .addKeyValue("event", "reserve")
+                .addKeyValue("outcome", outcome)
+                .addKeyValue("reason", reason)
+                .addKeyValue("show_id", show.id())
+                .addKeyValue("user_id", userId)
+                .addKeyValue("seats", String.join(",", seats))
+                .addKeyValue("reservation_id", reservationId)
+                .addKeyValue("http_status", result.httpStatus())
+                .addKeyValue("duration_ms", (System.nanoTime() - start) / 1_000_000)
+                .log("reserve {} {}", outcome, reason == null ? "" : reason);
     }
 
     private ReserveResult reserveOnce(TransactionStatus status, String userId, Show show, List<String> seats,
@@ -164,7 +211,7 @@ public class ReservationService {
      * else is untouched.
      */
     public Transition cancel(String userId, String reservationId) {
-        return withRetry(() -> tx.execute(status -> {
+        Transition t = withRetry(() -> tx.execute(status -> {
             var row = reservations.findForUpdate(reservationId).orElseThrow(ReservationService::reservationNotFound);
             requireOwner(row, userId);
             if (row.status().equals("cancelled") || row.status().equals("expired")) {
@@ -174,6 +221,11 @@ public class ReservationService {
             reservations.setStatus(row.id(), "cancelled");
             return new Transition(toView(row).withStatus("cancelled"), released, true);
         }));
+        if (t.changed()) {
+            metrics.cancelled(t.seatsMoved());
+            logTransition("cancel", t);
+        }
+        return t;
     }
 
     /**
@@ -184,7 +236,7 @@ public class ReservationService {
      * instant is decided by the database clock inside the UPDATE.
      */
     public Transition confirm(String userId, String reservationId) {
-        return withRetry(() -> tx.execute(status -> {
+        Transition t = withRetry(() -> tx.execute(status -> {
             var row = reservations.findForUpdate(reservationId).orElseThrow(ReservationService::reservationNotFound);
             requireOwner(row, userId);
             return switch (row.status()) {
@@ -204,6 +256,11 @@ public class ReservationService {
                 default -> throw new IllegalStateException("unknown reservation status " + row.status());
             };
         }));
+        if (t.changed()) {
+            metrics.holdConfirmed(t.seatsMoved());
+            logTransition("confirm", t);
+        }
+        return t;
     }
 
     /**
@@ -214,7 +271,7 @@ public class ReservationService {
      * Returns null when there's nothing left to expire.
      */
     public Transition expireOneOverdueHold() {
-        return withRetry(() -> tx.execute(status -> {
+        Transition t = withRetry(() -> tx.execute(status -> {
             var ids = reservations.lockExpiredHolds(1);
             if (ids.isEmpty()) {
                 return null;
@@ -224,6 +281,21 @@ public class ReservationService {
             reservations.setStatus(row.id(), "expired");
             return new Transition(toView(row).withStatus("expired"), released, true);
         }));
+        if (t != null) {
+            metrics.expired(t.seatsMoved());
+            logTransition("expire", t);
+        }
+        return t;
+    }
+
+    private static void logTransition(String event, Transition t) {
+        log.atInfo()
+                .addKeyValue("event", event)
+                .addKeyValue("reservation_id", t.reservation().reservationId())
+                .addKeyValue("show_id", t.reservation().showId())
+                .addKeyValue("user_id", t.reservation().userId())
+                .addKeyValue("seats_moved", t.seatsMoved())
+                .log("{} {}", event, t.reservation().reservationId());
     }
 
     private static ApiException holdExpired() {
@@ -242,6 +314,7 @@ public class ReservationService {
             try {
                 return work.get();
             } catch (PessimisticLockingFailureException e) {
+                metrics.lockRetry();
                 log.warn("transaction retry {} after lock failure: {}", attempt, e.getMostSpecificCause().getMessage());
                 if (attempt >= MAX_ATTEMPTS) {
                     throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "try_again",

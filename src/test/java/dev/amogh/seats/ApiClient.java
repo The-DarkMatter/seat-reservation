@@ -74,7 +74,8 @@ public class ApiClient {
         try {
             var res = http.send(req, HttpResponse.BodyHandlers.ofString());
             String raw = res.body();
-            JsonNode body = raw == null || raw.isBlank() ? null : json.readTree(raw);
+            boolean isJson = res.headers().firstValue("Content-Type").orElse("").contains("json");
+            JsonNode body = !isJson || raw == null || raw.isBlank() ? null : json.readTree(raw);
             return new Response(res.statusCode(), body, raw, res.headers());
         } catch (Exception e) {
             throw new IllegalStateException("request failed: " + req.uri(), e);
