@@ -40,11 +40,11 @@ echo "== App checkout in $APP_DIR"
 if [[ ! -d "$APP_DIR/.git" ]]; then
   git clone "$REPO_URL" "$APP_DIR"
 fi
-chown -R ubuntu:ubuntu "$APP_DIR"
 if [[ ! -f "$APP_DIR/.env" ]]; then
   cp "$APP_DIR/deploy/.env.example" "$APP_DIR/.env"
   chmod 600 "$APP_DIR/.env"
   echo "!! Fill in $APP_DIR/.env, then run: $APP_DIR/deploy/deploy.sh latest"
 fi
+chown -R ubuntu:ubuntu "$APP_DIR"
 
 echo "== Done. Docker restarts the stack on reboot (restart: unless-stopped)."
