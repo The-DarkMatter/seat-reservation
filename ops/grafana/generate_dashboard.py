@@ -128,10 +128,13 @@ templating = [
     # history); prefer the stack's own "...-prom" / "...-logs" when they exist.
     {"name": "datasource", "type": "datasource", "query": "prometheus", "label": "Metrics",
      "regex": "/^(?!grafanacloud-usage).*(-prom|Prometheus)$/", "current": {}, "hide": 0},
+    # Dropdown shows the show's name, but filters by its id (names aren't unique).
     {"name": "show", "type": "query", "datasource": DS, "label": "Show",
-     "query": {"query": "label_values(seats_capacity, show_id)", "refId": "show"},
-     "definition": "label_values(seats_capacity, show_id)", "refresh": 2, "includeAll": True,
-     "allValue": ".*", "multi": False, "current": {"text": "All", "value": "$__all"}, "sort": 0},
+     "query": {"query": "query_result(max by (show, show_id) (seats_capacity))", "refId": "show"},
+     "definition": "query_result(max by (show, show_id) (seats_capacity))",
+     "regex": '/show="(?<text>[^"]+)",\s*show_id="(?<value>[^"]+)"/',
+     "refresh": 2, "includeAll": True, "allValue": ".*", "multi": False,
+     "current": {"text": "All", "value": "$__all"}, "sort": 0},
 ]
 if with_logs:
     templating.insert(1, {"name": "logs", "type": "datasource", "query": "loki", "label": "Logs",

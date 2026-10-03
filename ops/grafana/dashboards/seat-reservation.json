@@ -32,10 +32,11 @@
         },
         "label": "Show",
         "query": {
-          "query": "label_values(seats_capacity, show_id)",
+          "query": "query_result(max by (show, show_id) (seats_capacity))",
           "refId": "show"
         },
-        "definition": "label_values(seats_capacity, show_id)",
+        "definition": "query_result(max by (show, show_id) (seats_capacity))",
+        "regex": "/show=\"(?<text>[^\"]+)\",\\s*show_id=\"(?<value>[^\"]+)\"/",
         "refresh": 2,
         "includeAll": true,
         "allValue": ".*",
