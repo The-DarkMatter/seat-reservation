@@ -1,0 +1,106 @@
+spring:
+  application:
+    name: seat-reservation
+  threads:
+    virtual:
+      # Every request gets its own virtual thread, so 20k concurrent requests
+      # cost almost nothing to hold open while they queue for a DB connection.
+      enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/seats}
+    username: ${DB_USER:seats}
+    password: ${DB_PASSWORD:seats}
+    hikari:
+      pool-name: seats-db
+      # The pool, not the thread count, is the real concurrency limit: at most
+      # this many transactions are in MySQL at once, which also bounds how many
+      # can queue on one hot seat row.
+      maximum-pool-size: ${DB_POOL_SIZE:30}
+      minimum-idle: ${DB_POOL_SIZE:30}
+      connection-timeout: 20000
+      validation-timeout: 1000
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+      # Lock waits should be milliseconds; anything near 10s is a bug, and the
+      # caller retries it rather than surfacing a 500.
+      connection-init-sql: SET SESSION innodb_lock_wait_timeout = 10
+      data-source-properties:
+        # Report rows actually changed, not rows matched.
+        useAffectedRows: true
+        rewriteBatchedStatements: true
+        cachePrepStmts: true
+        useServerPrepStmts: true
+        prepStmtCacheSize: 256
+        prepStmtCacheSqlLimit: 2048
+        connectionTimeZone: UTC
+        forceConnectionTimeZoneToSession: true
+        connectTimeout: 3000
+        socketTimeout: 30000
+        allowPublicKeyRetrieval: true
+        sslMode: DISABLED
+        tcpKeepAlive: true
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: non_null
+    deserialization:
+      # Money is integer paise. Without this, Jackson silently truncates
+      # 250.5 to 250 instead of rejecting it.
+      accept-float-as-int: false
+      fail-on-null-for-primitives: true
+      fail-on-unknown-properties: false
+
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+  tomcat:
+    # A refused connection turns into a 502 at whatever proxy sits in front, so
+    # accept and queue generously; virtual threads make queued requests cheap.
+    max-connections: 20000
+    accept-count: 5000
+    keep-alive-timeout: 65s
+    max-keep-alive-requests: -1
+
+management:
+  endpoints:
+    web:
+      base-path: /
+      discovery:
+        enabled: false
+      exposure:
+        include: health,prometheus,info
+      path-mapping:
+        prometheus: metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-components: always
+      group:
+        live:
+          include: livenessState
+        ready:
+          include: readinessState,db
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        reservation.reserve: true
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: seat-reservation
+    version: ${GIT_SHA:dev}
+
+app:
+  # Dev defaults only. Real deployments set both through the environment.
+  jwt-secret: ${JWT_SECRET:dev-only-jwt-secret-change-me-0123456789}
+  admin-secret: ${ADMIN_SECRET:demo-admin-secret}
+  token-ttl: 24h
+  sweeper-interval: 2s
+
+logging:
+  structured:
+    format:
+      console: ${LOG_FORMAT:ecs}

@@ -1,2 +1,6 @@
-/mvnw text eol=lf
+# Everything is built and run inside Linux containers, so keep LF in the repo
+# and in working copies (a CRLF burst.sh or entrypoint fails with "bad interpreter").
+* text=auto eol=lf
 *.cmd text eol=crlf
+*.jar binary
+*.png binary
