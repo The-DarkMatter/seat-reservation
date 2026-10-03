@@ -17,7 +17,10 @@ spring:
       # can queue on one hot seat row.
       maximum-pool-size: ${DB_POOL_SIZE:30}
       minimum-idle: ${DB_POOL_SIZE:30}
-      connection-timeout: 20000
+      # How long a request may queue for a connection. A burst should queue, not fail:
+      # on a 4-core box a 20k stampede drains in seconds, and a 503 here would be a
+      # 5xx for overload, not for anything being wrong.
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:60000}
       validation-timeout: 1000
       transaction-isolation: TRANSACTION_READ_COMMITTED
       # Lock waits should be milliseconds; anything near 10s is a bug, and the
