@@ -191,7 +191,11 @@ public class ReservationService {
             }
         }
 
-        long amount = Math.multiplyExact(show.pricePaise(), (long) seats.size());
+        // Each seat costs its section's price (a flat show has one section).
+        long amount = 0;
+        for (String seat : seats) {
+            amount = Math.addExact(amount, show.sectionOf(seat).pricePaise());
+        }
         reservations.insertReservation(reservationId, show.id(), userId, seats, amount, seatStatus, heldUntil);
         var view = new ReservationView(reservationId, show.id(), userId, seats, amount, seatStatus,
                 heldUntil == null ? null : heldUntil.toInstant(ZoneOffset.UTC));
