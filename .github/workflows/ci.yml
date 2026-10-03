@@ -26,6 +26,17 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: maven
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: UI typecheck + unit tests
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm test
       - name: Unit + integration tests (Testcontainers MySQL 8.4)
         run: ./mvnw -B verify
       - name: Build the burst client
@@ -35,6 +46,17 @@ jobs:
           docker compose up -d --build
           for i in $(seq 1 60); do curl -fsS localhost:8080/health/ready && break; sleep 2; done
           ./burst.sh http://localhost:8080 --stampede 3000 --buyers-per-hot-seat 200
+      - name: UI end-to-end (Playwright, two browsers racing for one seat, checkout, rush)
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/playwright-report
+          if-no-files-found: ignore
       - if: failure()
         run: docker compose logs --tail 200
 
