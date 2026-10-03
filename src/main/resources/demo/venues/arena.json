@@ -1,0 +1,64 @@
+{
+  "id": "arena",
+  "category": "Music",
+  "starts_in_days": 9,
+  "local_time": "19:30",
+  "show": {
+    "name": "Monsoon Raag: Live in Concert",
+    "venue": "Kursi Arena, Mumbai",
+    "per_user_limit": 6,
+    "hold_ttl_seconds": 300,
+    "layout": {
+      "canvas": { "w": 1000, "h": 800 },
+      "stage": {
+        "label": "STAGE",
+        "points": [[380, 30], [620, 30], [620, 100], [530, 100], [530, 250], [470, 250], [470, 100], [380, 100]]
+      },
+      "poster": { "from": "#1b1446", "to": "#ff7a3d", "glyph": "raag" },
+      "blurb": "An evening of ragas, rain songs and a 40-piece string section. Standing pit up front, seated tiers behind."
+    },
+    "sections": [
+      {
+        "code": "LOUNGE", "name": "Lounge", "price_paise": 1500000,
+        "rows": [{ "row": "A", "seats": 8 }, { "row": "B", "seats": 8 }, { "row": "C", "seats": 8 }],
+        "display": { "color": "#E7A6F0", "points": [[190, 130], [330, 130], [330, 320], [190, 320]] }
+      },
+      {
+        "code": "SKYBOX", "name": "Skybox", "price_paise": 1200000,
+        "rows": [{ "row": "A", "seats": 8 }, { "row": "B", "seats": 8 }, { "row": "C", "seats": 8 }],
+        "display": { "color": "#F5B5C4", "points": [[670, 130], [810, 130], [810, 320], [670, 320]] }
+      },
+      {
+        "code": "DIAMOND", "name": "Diamond", "price_paise": 899900,
+        "rows": [
+          { "row": "A", "seats": 28, "aisles_after": [9, 19] }, { "row": "B", "seats": 28, "aisles_after": [9, 19] },
+          { "row": "C", "seats": 28, "aisles_after": [9, 19] }, { "row": "D", "seats": 28, "aisles_after": [9, 19] },
+          { "row": "E", "seats": 28, "aisles_after": [9, 19] }, { "row": "F", "seats": 28, "aisles_after": [9, 19] },
+          { "row": "G", "seats": 28, "aisles_after": [9, 19] }, { "row": "H", "seats": 28, "aisles_after": [9, 19] }
+        ],
+        "display": {
+          "color": "#A8C7F5",
+          "points": [[350, 130], [455, 130], [455, 270], [545, 270], [545, 130], [650, 130], [650, 340], [350, 340]]
+        }
+      },
+      {
+        "code": "PLATINUM", "name": "Platinum", "price_paise": 549900,
+        "rows": [
+          { "row": "J", "seats": 32, "aisles_after": [10, 22] }, { "row": "K", "seats": 32, "aisles_after": [10, 22] },
+          { "row": "L", "seats": 32, "aisles_after": [10, 22] }, { "row": "M", "seats": 32, "aisles_after": [10, 22] },
+          { "row": "N", "seats": 32, "aisles_after": [10, 22] }, { "row": "P", "seats": 32, "aisles_after": [10, 22] },
+          { "row": "Q", "seats": 32, "aisles_after": [10, 22] }, { "row": "R", "seats": 32, "aisles_after": [10, 22] }
+        ],
+        "display": { "color": "#C4B5F6", "points": [[330, 360], [670, 360], [670, 480], [330, 480]] }
+      },
+      {
+        "code": "GOLD", "name": "Gold (standing)", "price_paise": 299900, "standing": true, "capacity": 700,
+        "display": { "color": "#F3C978", "points": [[320, 500], [680, 500], [715, 630], [285, 630]] }
+      },
+      {
+        "code": "SILVER", "name": "Silver (standing)", "price_paise": 149900, "standing": true, "capacity": 1000,
+        "display": { "color": "#9DE9EF", "points": [[280, 650], [720, 650], [720, 770], [280, 770]] }
+      }
+    ]
+  }
+}

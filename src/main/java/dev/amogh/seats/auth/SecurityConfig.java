@@ -50,6 +50,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/", "/shows", "/shows/*", "/shows/*/seatmap", "/health", "/health/**",
                                 "/metrics", "/info").permitAll()
                         .requestMatchers("/error").permitAll()
+                        // The public demo (rate limited per IP in DemoController).
+                        .requestMatchers(HttpMethod.GET, "/demo/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/demo/shows", "/demo/shows/*/rush").permitAll()
                         .requestMatchers(HttpMethod.POST, "/shows").hasAuthority("SCOPE_admin")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(rs -> rs

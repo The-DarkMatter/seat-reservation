@@ -46,6 +46,11 @@ public class ShowCatalog {
         cache.put(show.id(), show);
     }
 
+    /** After a show is deleted (demo cleanup), so it 404s instead of being served from memory. */
+    public void forget(String showId) {
+        cache.invalidate(showId);
+    }
+
     private static ApiException notFound(String showId) {
         return ApiException.notFound("show_not_found", "No show with id " + showId);
     }

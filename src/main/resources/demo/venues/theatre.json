@@ -1,0 +1,49 @@
+{
+  "id": "theatre",
+  "category": "Theatre",
+  "starts_in_days": 12,
+  "local_time": "18:00",
+  "show": {
+    "name": "Kursi Ki Ladai: A Political Satire",
+    "venue": "Rangmanch Theatre, Pune",
+    "per_user_limit": 6,
+    "hold_ttl_seconds": 300,
+    "layout": {
+      "canvas": { "w": 1000, "h": 660 },
+      "stage": { "label": "STAGE", "points": [[300, 30], [700, 30], [700, 90], [300, 90]] },
+      "poster": { "from": "#3a0d1f", "to": "#f2b84b", "glyph": "satire" },
+      "blurb": "Seven ministers, one chair, no exit. A two-act comedy about the fight for the kursi."
+    },
+    "sections": [
+      {
+        "code": "PLATINUM", "name": "Platinum", "price_paise": 249900,
+        "rows": [
+          { "row": "A", "seats": 22, "aisles_after": [5, 17] }, { "row": "B", "seats": 22, "aisles_after": [5, 17] },
+          { "row": "C", "seats": 22, "aisles_after": [5, 17] }, { "row": "D", "seats": 22, "aisles_after": [5, 17] },
+          { "row": "E", "seats": 22, "aisles_after": [5, 17] }, { "row": "F", "seats": 22, "aisles_after": [5, 17] }
+        ],
+        "display": { "color": "#C4B5F6", "curve": 0.12, "points": [[300, 130], [700, 130], [740, 250], [260, 250]] }
+      },
+      {
+        "code": "GOLD", "name": "Gold", "price_paise": 179900,
+        "rows": [
+          { "row": "G", "seats": 26, "aisles_after": [6, 20] }, { "row": "H", "seats": 26, "aisles_after": [6, 20] },
+          { "row": "J", "seats": 26, "aisles_after": [6, 20] }, { "row": "K", "seats": 26, "aisles_after": [6, 20] },
+          { "row": "L", "seats": 26, "aisles_after": [6, 20] }, { "row": "M", "seats": 26, "aisles_after": [6, 20] },
+          { "row": "N", "seats": 26, "aisles_after": [6, 20] }, { "row": "P", "seats": 26, "aisles_after": [6, 20] }
+        ],
+        "display": { "color": "#F3C978", "curve": 0.12, "points": [[250, 270], [750, 270], [790, 420], [210, 420]] }
+      },
+      {
+        "code": "BALCONY", "name": "Balcony", "price_paise": 89900,
+        "rows": [
+          { "row": "A", "seats": 30, "aisles_after": [7, 23] }, { "row": "B", "seats": 30, "aisles_after": [7, 23] },
+          { "row": "C", "seats": 30, "aisles_after": [7, 23] }, { "row": "D", "seats": 30, "aisles_after": [7, 23] },
+          { "row": "E", "seats": 30, "aisles_after": [7, 23] }, { "row": "F", "seats": 30, "aisles_after": [7, 23] },
+          { "row": "G", "seats": 30, "aisles_after": [7, 23] }
+        ],
+        "display": { "color": "#F5B5C4", "curve": 0.12, "points": [[200, 460], [800, 460], [840, 620], [160, 620]] }
+      }
+    ]
+  }
+}

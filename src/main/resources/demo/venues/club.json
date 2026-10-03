@@ -1,0 +1,31 @@
+{
+  "id": "club",
+  "category": "Comedy",
+  "starts_in_days": 5,
+  "local_time": "21:00",
+  "show": {
+    "name": "Midnight Chai Comedy Hour",
+    "venue": "The Chai Room, Bengaluru",
+    "per_user_limit": 4,
+    "hold_ttl_seconds": 300,
+    "layout": {
+      "canvas": { "w": 600, "h": 420 },
+      "stage": { "label": "STAGE", "points": [[200, 20], [400, 20], [400, 70], [200, 70]] },
+      "poster": { "from": "#0f2f2a", "to": "#ffd23f", "glyph": "chai" },
+      "blurb": "Four comics, one mic, unlimited cutting chai. The front row will be roasted."
+    },
+    "sections": [
+      {
+        "code": "HOUSE", "name": "House seating", "price_paise": 79900,
+        "rows": [
+          { "row": "A", "seats": 14, "aisles_after": [7] }, { "row": "B", "seats": 14, "aisles_after": [7] },
+          { "row": "C", "seats": 14, "aisles_after": [7] }, { "row": "D", "seats": 14, "aisles_after": [7] },
+          { "row": "E", "seats": 14, "aisles_after": [7] }, { "row": "F", "seats": 14, "aisles_after": [7] },
+          { "row": "G", "seats": 14, "aisles_after": [7] }, { "row": "H", "seats": 14, "aisles_after": [7] },
+          { "row": "J", "seats": 14, "aisles_after": [7] }, { "row": "K", "seats": 14, "aisles_after": [7] }
+        ],
+        "display": { "color": "#F7A98B", "points": [[80, 100], [520, 100], [520, 400], [80, 400]] }
+      }
+    ]
+  }
+}

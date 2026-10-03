@@ -54,6 +54,9 @@ spring:
 server:
   port: ${PORT:8080}
   shutdown: graceful
+  # Behind Caddy: take the client IP from X-Forwarded-For, trusting private-range
+  # proxies only. Used by the demo endpoints' per-IP rate limit.
+  forward-headers-strategy: native
   tomcat:
     # A refused connection turns into a 502 at whatever proxy sits in front, so
     # accept and queue generously; virtual threads make queued requests cheap.
@@ -107,6 +110,17 @@ app:
   admin-secret: ${ADMIN_SECRET:demo-admin-secret}
   token-ttl: 24h
   sweeper-interval: 2s
+  # The public Kursi demo. Never touches shows created through POST /shows.
+  demo:
+    featured: ${DEMO_FEATURED:true}  # keep one live featured event per venue template
+    rotate-after: 12h                 # ...swapping in a fresh copy after this long
+    rotate-when-sold: 0.8             # ...or once this share of it is sold or held
+    retention: 24h                    # visitors' demo shows (and old idempotency keys) live this long
+    max-live-demo-shows: 300
+    max-rush-bots: 1500
+    creates-per-window: 6             # per client IP
+    rushes-per-window: 10
+    limit-window: 10m
 
 logging:
   structured:

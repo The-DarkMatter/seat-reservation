@@ -35,7 +35,7 @@ public class SeatGauges {
     private final MultiGauge confirmed;
     private final MultiGauge total;
 
-    record ShowCounts(String id, String name, int total, int available, int held, int confirmed) {
+    record ShowCounts(String id, String name, String kind, int total, int available, int held, int confirmed) {
     }
 
     public SeatGauges(JdbcClient jdbc, MeterRegistry registry) {
@@ -50,24 +50,25 @@ public class SeatGauges {
     public void refresh() {
         try {
             var rows = jdbc.sql("""
-                    SELECT s.id, s.name, s.total_seats,
+                    SELECT s.id, s.name, s.kind, s.total_seats,
                            SUM(se.status = 'available' OR (se.status = 'held' AND se.held_until <= NOW(6))) AS available,
                            SUM(se.status = 'held' AND se.held_until > NOW(6)) AS held,
                            SUM(se.status = 'confirmed') AS confirmed
-                    FROM (SELECT id, name, total_seats FROM shows ORDER BY created_at DESC LIMIT ?) s
+                    FROM (SELECT id, name, kind, total_seats FROM shows ORDER BY created_at DESC LIMIT ?) s
                     JOIN seats se ON se.show_id = s.id
-                    GROUP BY s.id, s.name, s.total_seats
+                    GROUP BY s.id, s.name, s.kind, s.total_seats
                     """)
                     .param(RECENT_SHOWS)
-                    .query((rs, n) -> new ShowCounts(rs.getString(1), rs.getString(2), rs.getInt(3),
-                            rs.getInt(4), rs.getInt(5), rs.getInt(6)))
+                    .query((rs, n) -> new ShowCounts(rs.getString(1), rs.getString(2), rs.getString(3), rs.getInt(4),
+                            rs.getInt(5), rs.getInt(6), rs.getInt(7)))
                     .list();
             var a = new ArrayList<MultiGauge.Row<?>>();
             var h = new ArrayList<MultiGauge.Row<?>>();
             var c = new ArrayList<MultiGauge.Row<?>>();
             var t = new ArrayList<MultiGauge.Row<?>>();
             for (var row : rows) {
-                var tags = Tags.of("show_id", row.id(), "show", row.name());
+                // kind (api / featured / demo) lets a dashboard leave out demo traffic.
+                var tags = Tags.of("show_id", row.id(), "show", row.name(), "kind", row.kind());
                 a.add(MultiGauge.Row.of(tags, row.available()));
                 h.add(MultiGauge.Row.of(tags, row.held()));
                 c.add(MultiGauge.Row.of(tags, row.confirmed()));
