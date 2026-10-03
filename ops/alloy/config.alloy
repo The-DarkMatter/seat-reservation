@@ -19,6 +19,7 @@ prometheus.scrape "app" {
   targets         = [{ "__address__" = "app:8080", "job" = "seat-reservation" }]
   metrics_path    = "/metrics"
   scrape_interval = "5s"
+  scrape_timeout  = "4s"
   forward_to      = [prometheus.remote_write.cloud.receiver]
 }
 
