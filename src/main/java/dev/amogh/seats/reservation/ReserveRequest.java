@@ -8,7 +8,9 @@ import java.util.List;
  * an unknown property, and unknown properties are ignored.
  *
  * Either {@code seats} (labels), or {@code section} + {@code quantity} for a
- * standing section, where any free places will do.
+ * standing section, where any free places will do. {@code allow_partial: true}
+ * books whatever is available instead of all-or-nothing.
  */
-public record ReserveRequest(List<String> seats, String idempotencyKey, String section, Integer quantity) {
+public record ReserveRequest(List<String> seats, String idempotencyKey, String section, Integer quantity,
+                             Boolean allowPartial) {
 }

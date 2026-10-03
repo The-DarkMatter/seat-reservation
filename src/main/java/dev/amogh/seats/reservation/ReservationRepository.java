@@ -151,6 +151,15 @@ public class ReservationRepository {
                 .list();
     }
 
+    /** Like {@link #firstUnavailable}, but every visibly taken seat (for partial bookings). */
+    public List<String> allUnavailable(String showId, List<String> labels) {
+        return jdbc.sql("SELECT label FROM seats WHERE show_id = :show AND label IN (:labels) AND NOT " + CLAIMABLE)
+                .param("show", showId)
+                .param("labels", labels)
+                .query(String.class)
+                .list();
+    }
+
     public void insertReservation(String id, String showId, String userId, List<String> seats,
                                   long amountPaise, String status, LocalDateTime expiresAt) {
         jdbc.sql("""

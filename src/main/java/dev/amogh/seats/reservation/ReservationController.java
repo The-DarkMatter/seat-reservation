@@ -69,8 +69,9 @@ public class ReservationController {
     }
 
     private static SeatRequest toSeatRequest(ReserveRequest body) {
+        boolean partial = Boolean.TRUE.equals(body.allowPartial());
         if (body.section() == null && body.quantity() == null) {
-            return new SeatRequest.Named(body.seats());
+            return new SeatRequest.Named(body.seats(), partial);
         }
         if (body.seats() != null) {
             throw ApiException.badRequest("invalid_seats", "send either seats or section + quantity, not both");
@@ -78,7 +79,7 @@ public class ReservationController {
         if (body.section() == null || body.quantity() == null) {
             throw ApiException.badRequest("invalid_quantity", "a standing booking needs both section and quantity");
         }
-        return new SeatRequest.Standing(body.section(), body.quantity());
+        return new SeatRequest.Standing(body.section(), body.quantity(), partial);
     }
 
     private static String resolveKey(String header, String body) {

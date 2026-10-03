@@ -174,20 +174,35 @@ public class ReservationService {
     }
 
     private ReserveResult claim(String userId, Show show, SeatRequest ask) {
-        if (ask instanceof SeatRequest.Named(var named)) {
-            var visiblyTaken = reservations.firstUnavailable(show.id(), named);
-            if (visiblyTaken.isPresent()) {
-                return seatTaken(visiblyTaken.get());
+        // Fast path (plain reads, no locks): drop seats that are visibly taken already.
+        // All-or-nothing declines on the first one; a partial request just tries the rest.
+        var missing = new ArrayList<String>();
+        List<String> candidates = List.of();
+        if (ask instanceof SeatRequest.Named named) {
+            if (named.allowPartial()) {
+                var taken = new HashSet<>(reservations.allUnavailable(show.id(), named.seats()));
+                candidates = named.seats().stream().filter(s -> !taken.contains(s)).toList();
+                named.seats().stream().filter(taken::contains).forEach(missing::add);
+                if (candidates.isEmpty()) {
+                    return seatTaken(missing.stream().sorted().findFirst().orElseThrow());
+                }
+            } else {
+                var visiblyTaken = reservations.firstUnavailable(show.id(), named.seats());
+                if (visiblyTaken.isPresent()) {
+                    return seatTaken(visiblyTaken.get());
+                }
+                candidates = named.seats();
             }
         }
+        int wanted = ask instanceof SeatRequest.Named ? candidates.size() : ask.count();
 
         reservations.lockUser(show.id(), userId);
         int alreadyHeld = reservations.countLiveSeats(show.id(), userId);
-        if (alreadyHeld + ask.count() > show.perUserLimit()) {
+        if (alreadyHeld + wanted > show.perUserLimit()) {
             var details = new LinkedHashMap<String, Object>();
             details.put("per_user_limit", show.perUserLimit());
             details.put("seats_held", alreadyHeld);
-            details.put("seats_requested", ask.count());
+            details.put("seats_requested", wanted);
             return declined(DeclineReason.PER_USER_LIMIT,
                     "This would exceed the limit of " + show.perUserLimit() + " seats per user", details);
         }
@@ -201,17 +216,25 @@ public class ReservationService {
             case SeatRequest.Named named -> {
                 // Sorted order is the deadlock-avoidance rule: two requests for {A12, A13}
                 // and {A13, A12} both lock A12 first, so neither can hold what the other needs.
-                for (String seat : named.seats().stream().sorted().toList()) {
+                var lost = new HashSet<String>();
+                for (String seat : candidates.stream().sorted().toList()) {
                     if (!reservations.claimSeat(show.id(), seat, reservationId, userId, seatStatus, heldUntil)) {
-                        return seatTaken(seat);
+                        if (!named.allowPartial()) {
+                            return seatTaken(seat);
+                        }
+                        lost.add(seat);
                     }
                 }
-                seats = named.seats();
+                if (lost.size() == candidates.size()) {
+                    return seatTaken(lost.stream().sorted().findFirst().orElseThrow());
+                }
+                seats = candidates.stream().filter(s -> !lost.contains(s)).toList();
+                named.seats().stream().filter(lost::contains).forEach(missing::add);
             }
             case SeatRequest.Standing standing -> {
                 // Any free places will do: lock some (skipping ones others hold), then claim them.
                 seats = reservations.lockFreeStandingPlaces(show.id(), standing.section(), standing.quantity());
-                if (seats.size() < standing.quantity()) {
+                if (seats.isEmpty() || (seats.size() < standing.quantity() && !standing.allowPartial())) {
                     return sectionSoldOut(show.section(standing.section()).orElseThrow(), standing, seats.size());
                 }
                 for (String seat : seats) {
@@ -228,8 +251,10 @@ public class ReservationService {
             amount = Math.addExact(amount, show.sectionOf(seat).pricePaise());
         }
         reservations.insertReservation(reservationId, show.id(), userId, seats, amount, seatStatus, heldUntil);
+        ReservationView.Shortfall shortfall = seats.size() == ask.count() ? null
+                : new ReservationView.Shortfall(ask.count(), ask instanceof SeatRequest.Named ? List.copyOf(missing) : null);
         var view = new ReservationView(reservationId, show.id(), userId, seats, amount, seatStatus,
-                heldUntil == null ? null : heldUntil.toInstant(ZoneOffset.UTC));
+                heldUntil == null ? null : heldUntil.toInstant(ZoneOffset.UTC), shortfall);
         return new Reserved(view, json.writeValueAsString(view));
     }
 
@@ -395,7 +420,7 @@ public class ReservationService {
 
     private static SeatRequest validate(Show show, SeatRequest request) {
         return switch (request) {
-            case SeatRequest.Named named -> new SeatRequest.Named(validateSeats(show, named.seats()));
+            case SeatRequest.Named named -> new SeatRequest.Named(validateSeats(show, named.seats()), named.allowPartial());
             case SeatRequest.Standing standing -> {
                 if (show.section(standing.section()).filter(Section::standing).isEmpty()) {
                     throw ApiException.badRequest("unknown_section", "this show has no standing section by that code",
@@ -469,7 +494,7 @@ public class ReservationService {
             case SeatRequest.Named named -> String.join(",", named.seats().stream().sorted().toList());
             case SeatRequest.Standing standing -> "standing:" + standing.section() + ":" + standing.quantity();
         };
-        String canonical = showId + "\n" + what;
+        String canonical = showId + "\n" + what + (ask.allowPartial() ? "\npartial" : "");
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest);
