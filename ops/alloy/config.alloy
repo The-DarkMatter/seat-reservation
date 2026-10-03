@@ -39,6 +39,8 @@ prometheus.scrape "host" {
 // MySQL: TPS, row-lock waits, connections (embedded mysqld_exporter).
 prometheus.exporter.mysql "db" {
   data_source_name = sys.env("MYSQL_EXPORTER_DSN")
+  // Single node, and the exporter runs as the app user: no replication to report.
+  disable_collectors = ["slave_status"]
 }
 
 prometheus.scrape "mysql" {

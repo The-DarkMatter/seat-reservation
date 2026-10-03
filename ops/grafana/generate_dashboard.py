@@ -124,8 +124,10 @@ y += 8
 
 with_logs = len(sys.argv) > 2 and sys.argv[2] == "--with-logs"
 templating = [
+    # Grafana Cloud stacks also ship internal Prometheus/Loki sources (usage, alert
+    # history); prefer the stack's own "...-prom" / "...-logs" when they exist.
     {"name": "datasource", "type": "datasource", "query": "prometheus", "label": "Metrics",
-     "current": {}, "hide": 0},
+     "regex": "/^(?!grafanacloud-usage).*(-prom|Prometheus)$/", "current": {}, "hide": 0},
     {"name": "show", "type": "query", "datasource": DS, "label": "Show",
      "query": {"query": "label_values(seats_capacity, show_id)", "refId": "show"},
      "definition": "label_values(seats_capacity, show_id)", "refresh": 2, "includeAll": True,
@@ -133,7 +135,7 @@ templating = [
 ]
 if with_logs:
     templating.insert(1, {"name": "logs", "type": "datasource", "query": "loki", "label": "Logs",
-                          "current": {}, "hide": 0})
+                          "regex": "/.*-logs$/", "current": {}, "hide": 0})
     templating.append({"name": "request_id", "type": "textbox", "label": "request id", "query": "",
                        "current": {"text": "", "value": ""}})
     row("Logs", y)

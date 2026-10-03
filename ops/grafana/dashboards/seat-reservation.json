@@ -19,6 +19,7 @@
         "type": "datasource",
         "query": "prometheus",
         "label": "Metrics",
+        "regex": "/^(?!grafanacloud-usage).*(-prom|Prometheus)$/",
         "current": {},
         "hide": 0
       },
