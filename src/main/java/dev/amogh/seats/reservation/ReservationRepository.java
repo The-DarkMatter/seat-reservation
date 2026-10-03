@@ -104,6 +104,32 @@ public class ReservationRepository {
         return updated == 1;
     }
 
+    /**
+     * Fast-path decline: the first requested seat that is visibly taken right
+     * now, read WITHOUT locking (a plain consistent read).
+     *
+     * Why it exists: under READ COMMITTED, an UPDATE that had to WAIT for a row
+     * lock and then finds the row no longer matches does not release that lock;
+     * it keeps it until commit. (Without a wait, the lock on a non-matching row
+     * is released immediately.) In a hot-seat storm every loser that queued
+     * behind the winner therefore held the row for the rest of its transaction,
+     * and 500 buyers went through single file. Checking first means requests
+     * arriving after the winner commits never join the lock queue at all.
+     *
+     * This can only ever say "taken". The grant still happens exclusively in
+     * {@link #claimSeat}, so a stale read can't double-sell; at worst it
+     * declines a seat that was released a moment ago, which is a legitimate
+     * outcome at the moment of the read.
+     */
+    public Optional<String> firstUnavailable(String showId, List<String> labels) {
+        return jdbc.sql("SELECT label FROM seats WHERE show_id = :show AND label IN (:labels) AND NOT "
+                        + CLAIMABLE + " ORDER BY label LIMIT 1")
+                .param("show", showId)
+                .param("labels", labels)
+                .query(String.class)
+                .optional();
+    }
+
     public void insertReservation(String id, String showId, String userId, List<String> seats,
                                   long amountPaise, String status, LocalDateTime expiresAt) {
         jdbc.sql("""

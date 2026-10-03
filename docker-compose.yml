@@ -12,9 +12,26 @@ services:
       MYSQL_USER: seats
       MYSQL_PASSWORD: ${DB_PASSWORD:-seats}
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root-dev-only}
+    # Server settings as flags, not a mounted my.cnf: MySQL silently ignores a
+    # world-writable config file, and that's what a bind mount from a Windows
+    # or macOS checkout looks like inside the container.
+    command:
+      # The app also sets this per connection; server-wide keeps ad-hoc sessions consistent.
+      - --transaction-isolation=READ-COMMITTED
+      # Hikari holds a fixed pool (30); leave headroom for exporters and humans.
+      - --max-connections=300
+      # Durable commits: a confirmed seat survives a crash.
+      - --innodb-flush-log-at-trx-commit=1
+      - --innodb-redo-log-capacity=1G
+      # Lock waits here are milliseconds; anything near 10s is a bug, and the app retries.
+      - --innodb-lock-wait-timeout=10
+      # Single node, no replicas: the binlog would only add a second fsync per commit.
+      # A deployment with replicas or point-in-time recovery keeps it on.
+      - --disable-log-bin
+      - --default-time-zone=+00:00
+      - --innodb-buffer-pool-size=${MYSQL_BUFFER_POOL:-512M}
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./ops/mysql/my.cnf:/etc/mysql/conf.d/seats.cnf:ro
     healthcheck:
       # TCP ping only succeeds once the real server is up (init runs socket-only).
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]

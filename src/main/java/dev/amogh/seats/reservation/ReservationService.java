@@ -41,6 +41,7 @@ import tools.jackson.databind.json.JsonMapper;
  * <ol>
  *   <li>claim the idempotency key (the PK makes a second claim impossible);</li>
  *   <li>SAVEPOINT;</li>
+ *   <li>fast path: if a requested seat is visibly taken (plain read, no lock), decline;</li>
  *   <li>lock this user's (show, user) mutex row and check the per-user limit;</li>
  *   <li>claim each seat, in sorted order, with a conditional UPDATE;</li>
  *   <li>insert the reservation, store the response on the key, COMMIT.</li>
@@ -162,6 +163,11 @@ public class ReservationService {
     }
 
     private ReserveResult claim(String userId, Show show, List<String> seats) {
+        var visiblyTaken = reservations.firstUnavailable(show.id(), seats);
+        if (visiblyTaken.isPresent()) {
+            return seatTaken(visiblyTaken.get());
+        }
+
         reservations.lockUser(show.id(), userId);
         int alreadyHeld = reservations.countLiveSeats(show.id(), userId);
         if (alreadyHeld + seats.size() > show.perUserLimit()) {
@@ -181,8 +187,7 @@ public class ReservationService {
         // and {A13, A12} both lock A12 first, so neither can hold what the other needs.
         for (String seat : seats.stream().sorted().toList()) {
             if (!reservations.claimSeat(show.id(), seat, reservationId, userId, seatStatus, heldUntil)) {
-                return declined(DeclineReason.SEAT_TAKEN, "Seat " + seat + " is no longer available",
-                        Map.of("seats", List.of(seat)));
+                return seatTaken(seat);
             }
         }
 
@@ -323,6 +328,11 @@ public class ReservationService {
                 sleepQuietly(ThreadLocalRandom.current().nextLong(5, 25) * attempt);
             }
         }
+    }
+
+    private Declined seatTaken(String seat) {
+        return declined(DeclineReason.SEAT_TAKEN, "Seat " + seat + " is no longer available",
+                Map.of("seats", List.of(seat)));
     }
 
     private Declined declined(DeclineReason reason, String message, Map<String, Object> details) {
