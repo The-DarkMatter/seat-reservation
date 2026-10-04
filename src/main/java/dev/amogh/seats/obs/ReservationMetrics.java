@@ -74,6 +74,11 @@ public class ReservationMetrics {
         }
     }
 
+    /** Seats added to an existing hold (same reservation, same expiry). */
+    public void addedToHold(int seats) {
+        seatsHeld.increment(seats);
+    }
+
     public void holdConfirmed(int seats) {
         reservationsConfirmed.increment();
         seatsConfirmed.increment(seats);

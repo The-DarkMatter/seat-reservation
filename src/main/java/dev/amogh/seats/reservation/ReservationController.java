@@ -45,6 +45,29 @@ public class ReservationController {
         return response.body(result.body());
     }
 
+    /**
+     * Adds seats to a hold you already have, on the same timer (200 with the
+     * whole reservation). Same body shapes as reserve: {"seats": [...]} or
+     * {"section": "PIT", "quantity": 2}, optional allow_partial and key.
+     */
+    @PostMapping("/reservations/{reservationId}/seats")
+    public ResponseEntity<String> addSeats(@PathVariable String reservationId,
+                                           @RequestHeader(name = "Idempotency-Key", required = false) String headerKey,
+                                           @RequestBody ReserveRequest body,
+                                           @AuthenticationPrincipal Jwt jwt) {
+        String key = resolveKey(headerKey, body.idempotencyKey());
+        ReserveResult result = service.addToHold(jwt.getSubject(), reservationId, toSeatRequest(body), key);
+        // Success here is "updated" (200), including a replay of one.
+        boolean ok = result instanceof ReserveResult.Reserved
+                || (result instanceof ReserveResult.Replayed replay && replay.httpStatus() == 201);
+        int status = ok ? 200 : result.httpStatus();
+        var response = ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON);
+        if (result instanceof ReserveResult.Replayed) {
+            response.header("Idempotent-Replayed", "true");
+        }
+        return response.body(result.body());
+    }
+
     @GetMapping("/reservations/{reservationId}")
     public ReservationView get(@PathVariable String reservationId, @AuthenticationPrincipal Jwt jwt) {
         return service.get(jwt.getSubject(), reservationId);

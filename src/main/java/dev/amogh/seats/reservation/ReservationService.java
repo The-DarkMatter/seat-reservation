@@ -151,13 +151,7 @@ public class ReservationService {
     private ReserveResult reserveOnce(TransactionStatus status, String userId, Show show, SeatRequest ask,
                                       String key, String fingerprint) {
         if (key != null && !idempotency.tryClaim(userId, key, fingerprint)) {
-            var stored = idempotency.find(userId, key)
-                    .orElseThrow(() -> new IllegalStateException("idempotency row vanished"));
-            if (!stored.requestHash().equals(fingerprint)) {
-                return declined(DeclineReason.IDEMPOTENCY_KEY_REUSE,
-                        "This idempotency key was already used for a different request", Map.of());
-            }
-            return new Replayed(stored.httpStatus(), stored.response());
+            return replayOrReuse(userId, key, fingerprint);
         }
 
         Object savepoint = status.createSavepoint();
@@ -173,7 +167,63 @@ public class ReservationService {
         return result;
     }
 
+    private ReserveResult replayOrReuse(String userId, String key, String fingerprint) {
+        var stored = idempotency.find(userId, key)
+                .orElseThrow(() -> new IllegalStateException("idempotency row vanished"));
+        if (!stored.requestHash().equals(fingerprint)) {
+            return declined(DeclineReason.IDEMPOTENCY_KEY_REUSE,
+                    "This idempotency key was already used for a different request", Map.of());
+        }
+        return new Replayed(stored.httpStatus(), stored.response());
+    }
+
     private ReserveResult claim(String userId, Show show, SeatRequest ask) {
+        String seatStatus = show.usesHolds() ? "held" : "confirmed";
+        LocalDateTime heldUntil = show.usesHolds() ? reservations.dbNowPlusSeconds(show.holdTtlSeconds()) : null;
+        String reservationId = UUID.randomUUID().toString();
+
+        Claim claim = claimSeats(userId, show, ask, reservationId, seatStatus, heldUntil);
+        if (claim.declined() != null) {
+            return claim.declined();
+        }
+        List<String> seats = claim.seats();
+        long amount = priceOf(show, seats);
+        reservations.insertReservation(reservationId, show.id(), userId, seats, amount, seatStatus, heldUntil);
+        var view = new ReservationView(reservationId, show.id(), userId, seats, amount, seatStatus,
+                heldUntil == null ? null : heldUntil.toInstant(ZoneOffset.UTC), shortfall(ask, claim));
+        return new Reserved(view, json.writeValueAsString(view));
+    }
+
+    /** Seats this step claimed (and, for a partial request, the named ones it couldn't get), or a decline. */
+    private record Claim(List<String> seats, List<String> missing, Declined declined) {
+        static Claim no(Declined declined) {
+            return new Claim(List.of(), List.of(), declined);
+        }
+    }
+
+    /** Each seat costs its section's price (a flat show has one section). */
+    private static long priceOf(Show show, List<String> seats) {
+        long amount = 0;
+        for (String seat : seats) {
+            amount = Math.addExact(amount, show.sectionOf(seat).pricePaise());
+        }
+        return amount;
+    }
+
+    private static ReservationView.Shortfall shortfall(SeatRequest ask, Claim claim) {
+        return claim.seats().size() == ask.count() ? null
+                : new ReservationView.Shortfall(ask.count(), ask instanceof SeatRequest.Named ? List.copyOf(claim.missing()) : null);
+    }
+
+    /**
+     * The seat-claiming steps shared by reserve and add-to-hold: fast-path
+     * decline, the per-user mutex and limit, then the conditional UPDATEs (named
+     * seats in sorted order; standing places via SKIP LOCKED). Claimed seats get
+     * {@code reservationId}, {@code seatStatus} and {@code heldUntil}. On a decline
+     * the caller rolls back to its savepoint, undoing any seats claimed so far.
+     */
+    private Claim claimSeats(String userId, Show show, SeatRequest ask, String reservationId,
+                             String seatStatus, LocalDateTime heldUntil) {
         // Fast path (plain reads, no locks): drop seats that are visibly taken already.
         // All-or-nothing declines on the first one; a partial request just tries the rest.
         var missing = new ArrayList<String>();
@@ -184,12 +234,12 @@ public class ReservationService {
                 candidates = named.seats().stream().filter(s -> !taken.contains(s)).toList();
                 named.seats().stream().filter(taken::contains).forEach(missing::add);
                 if (candidates.isEmpty()) {
-                    return seatTaken(missing.stream().sorted().findFirst().orElseThrow());
+                    return Claim.no(seatTaken(missing.stream().sorted().findFirst().orElseThrow()));
                 }
             } else {
                 var visiblyTaken = reservations.firstUnavailable(show.id(), named.seats());
                 if (visiblyTaken.isPresent()) {
-                    return seatTaken(visiblyTaken.get());
+                    return Claim.no(seatTaken(visiblyTaken.get()));
                 }
                 candidates = named.seats();
             }
@@ -203,13 +253,9 @@ public class ReservationService {
             details.put("per_user_limit", show.perUserLimit());
             details.put("seats_held", alreadyHeld);
             details.put("seats_requested", wanted);
-            return declined(DeclineReason.PER_USER_LIMIT,
-                    "This would exceed the limit of " + show.perUserLimit() + " seats per user", details);
+            return Claim.no(declined(DeclineReason.PER_USER_LIMIT,
+                    "This would exceed the limit of " + show.perUserLimit() + " seats per user", details));
         }
-
-        String seatStatus = show.usesHolds() ? "held" : "confirmed";
-        LocalDateTime heldUntil = show.usesHolds() ? reservations.dbNowPlusSeconds(show.holdTtlSeconds()) : null;
-        String reservationId = UUID.randomUUID().toString();
 
         List<String> seats;
         switch (ask) {
@@ -220,13 +266,13 @@ public class ReservationService {
                 for (String seat : candidates.stream().sorted().toList()) {
                     if (!reservations.claimSeat(show.id(), seat, reservationId, userId, seatStatus, heldUntil)) {
                         if (!named.allowPartial()) {
-                            return seatTaken(seat);
+                            return Claim.no(seatTaken(seat));
                         }
                         lost.add(seat);
                     }
                 }
                 if (lost.size() == candidates.size()) {
-                    return seatTaken(lost.stream().sorted().findFirst().orElseThrow());
+                    return Claim.no(seatTaken(lost.stream().sorted().findFirst().orElseThrow()));
                 }
                 seats = candidates.stream().filter(s -> !lost.contains(s)).toList();
                 named.seats().stream().filter(lost::contains).forEach(missing::add);
@@ -235,7 +281,7 @@ public class ReservationService {
                 // Any free places will do: lock some (skipping ones others hold), then claim them.
                 seats = reservations.lockFreeStandingPlaces(show.id(), standing.section(), standing.quantity());
                 if (seats.isEmpty() || (seats.size() < standing.quantity() && !standing.allowPartial())) {
-                    return sectionSoldOut(show.section(standing.section()).orElseThrow(), standing, seats.size());
+                    return Claim.no(sectionSoldOut(show.section(standing.section()).orElseThrow(), standing, seats.size()));
                 }
                 for (String seat : seats) {
                     if (!reservations.claimSeat(show.id(), seat, reservationId, userId, seatStatus, heldUntil)) {
@@ -245,16 +291,101 @@ public class ReservationService {
             }
         }
 
-        // Each seat costs its section's price (a flat show has one section).
-        long amount = 0;
-        for (String seat : seats) {
-            amount = Math.addExact(amount, show.sectionOf(seat).pricePaise());
+        return new Claim(seats, missing, null);
+    }
+
+    /**
+     * POST /reservations/{id}/seats: more seats into a hold you already have, on
+     * the SAME timer. You picked two seats, went to pay, came back for a third:
+     * all three are paid for together, before the original hold runs out.
+     *
+     * Lock order: idempotency row, then this reservation's row, then the user
+     * mutex, then seats. Reserve never locks a reservation row and cancel/confirm/
+     * the sweeper never take the user mutex, so this adds no cycle.
+     *
+     * Retrying is safe: named seats already in the hold are skipped (re-adding
+     * them is a no-op), and an Idempotency-Key covers standing quantities too.
+     */
+    public ReserveResult addToHold(String userId, String reservationId, SeatRequest request, String idempotencyKey) {
+        var existing = reservations.find(reservationId).orElseThrow(ReservationService::reservationNotFound);
+        requireOwner(existing, userId);
+        Show show = catalog.require(existing.showId());
+        SeatRequest ask = validate(show, request);
+        String key = validateKey(idempotencyKey);
+        String fingerprint = sha256("add-to-hold\n" + reservationId + "\n" + fingerprint(show.id(), ask));
+
+        ReserveResult result = withRetry(() -> tx.execute(status -> addOnce(status, userId, reservationId, show, ask,
+                key, fingerprint)));
+        switch (result) {
+            case Reserved r -> {
+                int added = r.reservation().seats().size() - existing.seats().size();
+                if (added > 0) {
+                    metrics.addedToHold(added);
+                }
+                log.atInfo().addKeyValue("event", "add_to_hold").addKeyValue("reservation_id", reservationId)
+                        .addKeyValue("show_id", show.id()).addKeyValue("user_id", userId)
+                        .addKeyValue("seats", String.join(",", r.reservation().seats()))
+                        .log("add to hold {}", reservationId);
+            }
+            case Declined d -> metrics.declined(d.reason());
+            case Replayed p -> metrics.declined(DeclineReason.IDEMPOTENT_REPLAY);
         }
-        reservations.insertReservation(reservationId, show.id(), userId, seats, amount, seatStatus, heldUntil);
-        ReservationView.Shortfall shortfall = seats.size() == ask.count() ? null
-                : new ReservationView.Shortfall(ask.count(), ask instanceof SeatRequest.Named ? List.copyOf(missing) : null);
-        var view = new ReservationView(reservationId, show.id(), userId, seats, amount, seatStatus,
-                heldUntil == null ? null : heldUntil.toInstant(ZoneOffset.UTC), shortfall);
+        return result;
+    }
+
+    private ReserveResult addOnce(TransactionStatus status, String userId, String reservationId, Show show,
+                                  SeatRequest ask, String key, String fingerprint) {
+        if (key != null && !idempotency.tryClaim(userId, key, fingerprint)) {
+            return replayOrReuse(userId, key, fingerprint);
+        }
+        var row = reservations.findForUpdate(reservationId).orElseThrow(ReservationService::reservationNotFound);
+        requireOwner(row, userId);
+        switch (row.status()) {
+            case "held" -> {
+                if (row.holdExpired()) {
+                    throw holdExpired();
+                }
+            }
+            case "confirmed" -> throw ApiException.conflict("not_a_hold",
+                    "This booking is already paid for; book the new seats separately");
+            case "cancelled" -> throw ApiException.conflict("reservation_cancelled", "This reservation was cancelled");
+            case "expired" -> throw holdExpired();
+            default -> throw new IllegalStateException("unknown reservation status " + row.status());
+        }
+
+        // Seats already in this hold are skipped, so re-sending the same add is a no-op.
+        SeatRequest remaining = ask instanceof SeatRequest.Named named
+                ? new SeatRequest.Named(named.seats().stream().filter(s -> !row.seats().contains(s)).toList(),
+                        named.allowPartial())
+                : ask;
+        ReserveResult result;
+        if (remaining.count() == 0) {
+            result = holdView(row, row.seats(), row.amountPaise(), null);
+        } else {
+            Object savepoint = status.createSavepoint();
+            Claim claim = claimSeats(userId, show, remaining, row.id(), "held", row.expiresAt());
+            if (claim.declined() != null) {
+                status.rollbackToSavepoint(savepoint);
+                result = claim.declined();
+            } else {
+                status.releaseSavepoint(savepoint);
+                var seats = new ArrayList<>(row.seats());
+                seats.addAll(claim.seats());
+                long amount = Math.addExact(row.amountPaise(), priceOf(show, claim.seats()));
+                reservations.updateSeats(row.id(), seats, amount);
+                result = holdView(row, seats, amount, shortfall(remaining, claim));
+            }
+        }
+        if (key != null) {
+            idempotency.complete(userId, key, result.httpStatus(), result.body());
+        }
+        return result;
+    }
+
+    private Reserved holdView(ReservationRepository.ReservationRow row, List<String> seats, long amount,
+                              ReservationView.Shortfall shortfall) {
+        var view = new ReservationView(row.id(), row.showId(), row.userId(), List.copyOf(seats), amount, "held",
+                row.expiresAt().toInstant(ZoneOffset.UTC), shortfall);
         return new Reserved(view, json.writeValueAsString(view));
     }
 
@@ -494,7 +625,10 @@ public class ReservationService {
             case SeatRequest.Named named -> String.join(",", named.seats().stream().sorted().toList());
             case SeatRequest.Standing standing -> "standing:" + standing.section() + ":" + standing.quantity();
         };
-        String canonical = showId + "\n" + what + (ask.allowPartial() ? "\npartial" : "");
+        return sha256(showId + "\n" + what + (ask.allowPartial() ? "\npartial" : ""));
+    }
+
+    private static String sha256(String canonical) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest);

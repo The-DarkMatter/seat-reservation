@@ -253,6 +253,13 @@ public class ReservationRepository {
                 .update();
     }
 
+    /** A hold took more seats: its seat list and total grow, its expiry doesn't move. */
+    public void updateSeats(String id, List<String> seats, long amountPaise) {
+        jdbc.sql("UPDATE reservations SET seats = ?, amount_paise = ? WHERE id = ?")
+                .params(json.writeValueAsString(seats), amountPaise, id)
+                .update();
+    }
+
     public void setStatus(String id, String status) {
         jdbc.sql("UPDATE reservations SET status = ?, expires_at = IF(? = 'held', expires_at, NULL) WHERE id = ?")
                 .params(status, status, id)
