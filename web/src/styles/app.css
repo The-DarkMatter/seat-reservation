@@ -1760,3 +1760,12 @@ input[type='range'] {
     margin-left: 0;
   }
 }
+
+.hold-extra {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--brand-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

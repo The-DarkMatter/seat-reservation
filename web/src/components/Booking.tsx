@@ -44,6 +44,11 @@ export function useCountdown(expiresAt: string | undefined, onExpired?: () => vo
 type HoldBarProps = {
   hold: Reservation;
   others: number;
+  /** Seats picked since: they join this hold (and its timer) on PROCEED. */
+  extra: string[];
+  partial: boolean;
+  onPartial: (v: boolean) => void;
+  busy: boolean;
   sectionOf: (label: string) => Section | undefined;
   onContinue: () => void;
   onRelease: () => void;
@@ -55,8 +60,10 @@ type HoldBarProps = {
  * this bar offers to pick up the payment where you left it, with the hold's
  * real countdown.
  */
-export function HoldBar({ hold, others, sectionOf, onContinue, onRelease, onExpired }: HoldBarProps) {
+export function HoldBar({ hold, others, extra, partial, onPartial, busy, sectionOf, onContinue, onRelease, onExpired }: HoldBarProps) {
   const left = useCountdown(hold.expires_at, onExpired);
+  const extraTotal = extra.reduce((sum, label) => sum + (sectionOf(label)?.price_paise ?? 0), 0);
+  const count = hold.seats.length + extra.length;
   return (
     <div class="bottom-bar open hold-bar">
       <div class="container">
@@ -71,13 +78,19 @@ export function HoldBar({ hold, others, sectionOf, onContinue, onRelease, onExpi
             {others > 0 && <span class="muted"> · +{plural(others, 'other hold')} in My bookings</span>}
           </small>
           <div title={seatSummary(hold.seats, sectionOf)}>{seatSummary(hold.seats, sectionOf)}</div>
+          {extra.length > 0 && (
+            <div class="hold-extra">
+              + {seatSummary(extra, sectionOf)} <span class="muted">(joins this hold and timer)</span>
+            </div>
+          )}
+          {extra.length > 1 && <PartialToggle partial={partial} onChange={onPartial} />}
         </div>
         <div class="bottom-bar-total">
-          <strong>{rupees(hold.amount_paise)}</strong>
-          <small>{plural(hold.seats.length, 'ticket')}</small>
+          <strong>{rupees(hold.amount_paise + extraTotal)}</strong>
+          <small>{plural(count, 'ticket')}</small>
         </div>
-        <button class="btn btn-display proceed" onClick={onContinue}>
-          CONTINUE TO PAYMENT
+        <button class="btn btn-display proceed" onClick={onContinue} disabled={busy}>
+          {busy ? 'HOLDING…' : extra.length ? 'PROCEED' : 'CONTINUE TO PAYMENT'}
         </button>
       </div>
     </div>

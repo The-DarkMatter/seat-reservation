@@ -32,7 +32,12 @@ export function LabPage() {
 
   useEffect(() => {
     if (!showId) return setShow(null);
-    api.show(showId).then(setShow).catch(() => {
+    api.show(showId).then((s) => {
+      setShow(s);
+      // Keep the picker in step with the show you actually have.
+      if (s.layout?.template) setTemplate(s.layout.template);
+      if (s.hold_ttl_seconds) setTtl(s.hold_ttl_seconds);
+    }).catch(() => {
       sessionStorage.removeItem(LAB_KEY);
       setShowId(null);
     });
@@ -80,6 +85,9 @@ export function LabPage() {
     }
   };
 
+  const currentTemplate = show?.layout?.template;
+  const switching = !!show && template !== currentTemplate;
+  const picked = templates.find((t) => t.id === template);
   const counts = seatMap?.counts;
   const total = show?.total_seats ?? 0;
   const sum = counts ? counts.available + counts.held + counts.confirmed : 0;
@@ -105,6 +113,7 @@ export function LabPage() {
                 </div>
                 <span>
                   <strong>{t.venue.split(',')[0]}</strong>
+                  {t.id === currentTemplate && <span class="pill pill-good" style={{ marginLeft: '8px', padding: '1px 8px', fontSize: '11px' }}>Your show</span>}
                   <br />
                   <span class="muted" style={{ fontSize: '13px' }}>
                     {t.category} · {t.name}
@@ -121,11 +130,17 @@ export function LabPage() {
               <option value={300}>5 minutes</option>
             </select>
           </label>
-          <button class="btn btn-block" onClick={create} disabled={busy}>
-            {showId ? 'Make a fresh copy' : 'Create my show'}
+          <button class={`btn btn-block${show && !switching ? ' btn-ghost' : ''}`} onClick={create} disabled={busy}>
+            {!show ? 'Create my show' : switching ? `Switch to ${picked?.venue.split(',')[0] ?? 'this venue'}` : 'Make a fresh copy (empty seats)'}
           </button>
 
-          {show && (
+          {switching && (
+            <div class="banner warn" style={{ marginTop: '14px', marginBottom: 0 }}>
+              Your live show is still <strong>{show?.venue?.split(',')[0]}</strong>. Switch to rush {picked?.venue.split(',')[0]} instead.
+            </div>
+          )}
+
+          {show && !switching && (
             <>
               <h2 style={{ marginTop: '26px' }}>2 · Unleash the crowd</h2>
               <label class="field">

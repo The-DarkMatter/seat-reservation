@@ -93,11 +93,23 @@ test('coming back during a hold: seats stay selected and payment picks up where 
   await expect(page).toHaveURL(checkoutUrl);
   await expect(page.getByRole('timer')).toBeVisible();
 
+  // Picking one more seat adds it to the SAME hold: one checkout, one timer, one payment.
+  await page.goBack();
+  await seat(page, 'D', 5).click();
+  await expect(bar).toContainText('+ House seating (D5)');
+  await expect(bar).toContainText('₹2,397');
+  await expect(bar).toContainText('3 tickets');
+  await bar.getByRole('button', { name: 'PROCEED' }).click();
+  await expect(page).toHaveURL(checkoutUrl);
+  await expect(page.locator('.line-items')).toContainText('D3, D4, D5');
+  await expect(page.locator('.total-line')).toContainText('₹2,397');
+
   // Releasing from the seat map frees them for everyone.
   await page.goBack();
   await page.locator('.hold-bar').getByRole('button', { name: 'release' }).click();
   await expect(page.locator('.hold-bar')).toHaveCount(0);
   await expect(seat(page, 'D', 3)).toHaveAttribute('aria-label', /available/);
+  await expect(seat(page, 'D', 5)).toHaveAttribute('aria-label', /available/);
 });
 
 test('standing section: pick a quantity, not a seat', async ({ page, request }) => {
@@ -126,6 +138,21 @@ test('the rush lab sells every seat once and the totals always add up', async ({
   await expect(page.locator('.invariant.ok')).toBeVisible();
   await expect(page.locator('.stat', { hasText: 'Errors (5xx)' })).toContainText('0');
   await expect(page.locator('.stat', { hasText: '409 seat_taken' })).toBeVisible();
+});
+
+test('the lab makes switching venues explicit', async ({ page }) => {
+  await page.goto('/lab');
+  await page.getByRole('button', { name: /The Chai Room/ }).click();
+  await page.getByRole('button', { name: 'Create my show' }).click();
+  await expect(page.locator('.invariant')).toContainText('of 140');
+  await expect(page.getByRole('button', { name: /The Chai Room/ })).toContainText('Your show');
+
+  await page.getByRole('button', { name: /Rangmanch Theatre/ }).click();
+  await expect(page.getByRole('button', { name: 'Switch to Rangmanch Theatre' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'START THE RUSH' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Switch to Rangmanch Theatre' }).click();
+  await expect(page.locator('.invariant')).toContainText('of 550');
+  await expect(page.getByRole('button', { name: 'START THE RUSH' })).toBeVisible();
 });
 
 test('curl still gets JSON at the root while browsers get the app', async ({ request, page }) => {

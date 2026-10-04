@@ -155,6 +155,18 @@ function safeJson(text: string): unknown {
   }
 }
 
+/** POST with a fresh idempotency key, retried once with the same key on a network failure. */
+async function keyed(path: string, body: ReserveBody): Promise<Reservation> {
+  const key = crypto.randomUUID();
+  const send = () => request<Reservation>('POST', path, { body, auth: true, headers: { 'Idempotency-Key': key } });
+  try {
+    return await send();
+  } catch (e) {
+    if (e instanceof TypeError) return send(); // network failure, not an API answer
+    throw e;
+  }
+}
+
 export const api = {
   listShows: () => request<ShowSummary[]>('GET', '/shows'),
   show: (id: string) => request<Show>('GET', `/shows/${id}`),
@@ -179,19 +191,8 @@ export const api = {
    * first attempt's work or replays its stored answer, so a flaky connection
    * can never book twice.
    */
-  async reserve(showId: string, body: ReserveBody): Promise<Reservation> {
-    const key = crypto.randomUUID();
-    const send = () =>
-      request<Reservation>('POST', `/shows/${showId}/reserve`, {
-        body,
-        auth: true,
-        headers: { 'Idempotency-Key': key },
-      });
-    try {
-      return await send();
-    } catch (e) {
-      if (e instanceof TypeError) return send(); // network failure, not an API answer
-      throw e;
-    }
-  },
+  reserve: (showId: string, body: ReserveBody) => keyed(`/shows/${showId}/reserve`, body),
+
+  /** More seats into a hold you already have; they share its timer. */
+  addToHold: (reservationId: string, body: ReserveBody) => keyed(`/reservations/${reservationId}/seats`, body),
 };

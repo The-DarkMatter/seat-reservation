@@ -107,10 +107,13 @@ export function EventPage({ id }: { id: string }) {
     setSelected([...selected, label]);
   };
 
+  // While a hold is live, new seats join it (same reservation, same timer) instead of
+  // starting a second hold with its own countdown.
+  const activeHold = my.holds[0];
   const book = async (body: ReserveBody, wanted: string[]) => {
     setBusy(true);
     try {
-      const r = await api.reserve(show.id, body);
+      const r = activeHold ? await api.addToHold(activeHold.reservation_id, body) : await api.reserve(show.id, body);
       setSelected([]);
       setStanding(null);
       refreshMap();
@@ -123,6 +126,10 @@ export function EventPage({ id }: { id: string }) {
     } catch (e) {
       refreshMap();
       if (!(e instanceof ApiError)) return toast('Network trouble. Your retry is safe: same idempotency key.', 'warn');
+      if (e.code === 'hold_expired' || e.code === 'not_a_hold' || e.code === 'reservation_cancelled') {
+        refreshMine();
+        return toast('Your earlier hold has ended. Tap PROCEED again to hold these seats on a fresh timer.', 'warn', 6000);
+      }
       const lostSeats = (e.body?.seats as string[] | undefined) ?? [];
       if (e.code === 'seat_taken') {
         setSelected((cur) => cur.filter((l) => !lostSeats.includes(l)));
@@ -266,14 +273,22 @@ export function EventPage({ id }: { id: string }) {
         </div>
       </div>
 
-      {selected.length === 0 && my.holds.length > 0 ? (
+      {activeHold ? (
         <HoldBar
-          hold={my.holds[0]}
+          hold={activeHold}
           others={my.holds.length - 1}
+          extra={selected}
+          partial={partial}
+          onPartial={setPartial}
+          busy={busy}
           sectionOf={sectionOf}
-          onContinue={() => navigate(`/checkout/${my.holds[0].reservation_id}`)}
+          onContinue={() =>
+            selected.length
+              ? book({ seats: selected, allow_partial: partial }, selected)
+              : navigate(`/checkout/${activeHold.reservation_id}`)
+          }
           onRelease={async () => {
-            await api.cancel(my.holds[0].reservation_id).catch(() => {});
+            await api.cancel(activeHold.reservation_id).catch(() => {});
             toast('Seats released for someone else', 'info');
             refreshMine();
             refreshMap();
