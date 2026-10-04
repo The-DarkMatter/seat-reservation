@@ -2,26 +2,31 @@
 
 A small service that sells assigned seats for a show and stays correct when tens of thousands of buyers hit it in the same second. It never sells a seat twice, never lets a user go over their limit, and never reserves twice for a retried request.
 
-- **Live:** https://seats.amogh.cloud (Oracle Cloud Ampere A1 VM)
+- **Live API:** https://seats.amogh.cloud (Oracle Cloud Ampere A1 VM)
+- **Try it in a browser:** https://kursi.amogh.cloud. **Kursi** is a booking site on the same service. Open an event in two windows and click the same seat in both: exactly one of you gets it. Or send 1,500 bots at your own copy of a venue in the Rush lab. See [below](#kursi-the-booking-ui).
 - **Live dashboard (public, no login):** [Grafana: on-sale burst](https://violetmonorail1413.grafana.net/public-dashboards/4a39fb254b98447aa608638245763b54) shows outcomes by reason, 5xx, reconciliation drift, seat gauges, latency, pool saturation, and logs searchable by request id
 - **Raw metrics:** https://seats.amogh.cloud/metrics
 - **Latest live burst:** run from GitHub's network against the live URL: 19,537 reserve calls, 26/26 checks passed, zero 5xx, zero transport errors ([job log](https://github.com/The-DarkMatter/seat-reservation/actions/runs/37150172050)). Re-run it any time: Actions → *live burst* → Run workflow.
 - **Design write-up:** [WRITEUP.md](WRITEUP.md)
 
-Java 25 · Spring Boot 4.1 · MySQL 8.4 (InnoDB, READ COMMITTED) · plain JDBC · Flyway · Micrometer/Prometheus · Docker Compose · Caddy · Grafana Alloy/Cloud
+Java 25 · Spring Boot 4.1 · MySQL 8.4 (InnoDB, READ COMMITTED) · plain JDBC · Flyway · Micrometer/Prometheus · Docker Compose · Caddy · Grafana Alloy/Cloud · Preact + TypeScript (UI) · Playwright
+
+The version built for the original brief is tagged [`v1-submission`](https://github.com/The-DarkMatter/seat-reservation/tree/v1-submission). Everything since is additive: the brief's API and its guarantees are unchanged, and the same burst passes.
 
 ## Run it
 
 You only need Docker.
 
 ```bash
-docker compose up -d --build          # MySQL + API on http://localhost:8080
+docker compose up -d --build          # MySQL + API + UI on http://localhost:8080
 curl localhost:8080/health/ready      # {"status":"UP",...} once MySQL is reachable
 
 docker compose --profile obs up -d    # adds Prometheus :9090 and Grafana :3000 (dashboard preloaded)
 ```
 
-Run the tests with `./mvnw verify` (JDK 25 + Docker for Testcontainers). They include real races against MySQL: 500 buyers on one seat, parallel per-user-limit floods, 50-way same-key retries, and opposite-order multi-seat requests.
+Run the tests with `./mvnw verify` (JDK 25 + Docker for Testcontainers). They include real races against MySQL: 500 buyers on one seat, parallel per-user-limit floods, 50-way same-key retries, opposite-order multi-seat requests, a 500-buyer standing-area storm, and holds racing to take the same seat.
+
+UI: `cd web && npm ci && npm test` (unit), `npx playwright test` (end to end, against the compose stack), `npm run dev` (dev server on :5173, proxying the API).
 
 ## The one-command burst
 
@@ -66,10 +71,14 @@ curl -s localhost:8080/auth/token -H 'content-type: application/json' \
 
 | Method & path | Who | What |
 |---|---|---|
-| `POST /shows` | admin | `{"name","seats":[...],"price_paise", "per_user_limit"?(4), "hold_ttl_seconds"?}` → 201 with every seat available |
-| `GET /shows/{id}` | anyone | per-seat status (`available`/`held`/`confirmed`) and `counts`; `available+held+confirmed == total_seats` |
-| `POST /shows/{id}/reserve` | user | `{"seats":["A12"],"idempotency_key":"..."}`, or send the key as an `Idempotency-Key` header |
+| `POST /shows` | admin | `{"name","seats":[...],"price_paise", "per_user_limit"?(4), "hold_ttl_seconds"?}` → 201 with every seat available. Or the sectioned shape: `"sections":[{"code","name","price_paise","rows":[{"row":"A","seats":24,"aisles_after":[6]}]}, {"code","name","price_paise","standing":true,"capacity":500}]` |
+| `GET /shows/{id}` | anyone | per-seat status (`available`/`held`/`confirmed`) and `counts`, plus per-section counts; `available+held+confirmed == total_seats` |
+| `GET /shows` | anyone | featured events (or `?kind=api`) with counts per section |
+| `GET /shows/{id}/seatmap` | anyone | one character per seat (`a`/`h`/`c`) per section, for polling; cached 500 ms |
+| `POST /shows/{id}/reserve` | user | `{"seats":["A12"],"idempotency_key":"..."}`, or send the key as an `Idempotency-Key` header. Standing areas: `{"section":"PIT","quantity":2}`. Add `"allow_partial":true` to take whatever is free |
+| `POST /reservations/{id}/seats` | owner | adds seats to a live hold, on its existing timer; same body as reserve |
 | `GET /reservations/{id}` | owner | the reservation |
+| `GET /me/reservations` | user | your reservations, newest first (`?show_id=` to filter) |
 | `POST /reservations/{id}/confirm` | owner | turns a hold into a sale (shows with `hold_ttl_seconds`); idempotent |
 | `POST /reservations/{id}/cancel` | owner | frees the seats; idempotent |
 | `GET /health/live`, `GET /health/ready` | anyone | liveness; readiness checks MySQL and fails closed (503) |
@@ -84,10 +93,11 @@ curl -s localhost:8080/auth/token -H 'content-type: application/json' \
 | 409 | `seat_taken` | someone else holds or bought one of the seats (lists which) |
 | 409 | `per_user_limit` | you'd go over the show's per-user limit |
 | 409 | `idempotency_key_reuse` | the key was already used for a different show or seat set |
+| 409 | `section_sold_out` | a standing area doesn't have as many places left as you asked for |
 | 400 | `unknown_seats` / `duplicate_seats` / `invalid_seats` / `malformed_request` | bad input |
 | 401 / 403 / 404 | | no or invalid token / not yours / no such show or reservation |
 
-**Multi-seat requests are all-or-nothing.** If any requested seat is taken, nothing is reserved.
+**Multi-seat requests are all-or-nothing by default.** If any requested seat is taken, nothing is reserved. With `"allow_partial": true` you get the free ones, and the response carries a `shortfall` listing what you didn't get.
 
 ### A full walkthrough
 
@@ -103,6 +113,20 @@ curl -s $B/shows/$SHOW/reserve -H "authorization: Bearer $ALICE" -H 'content-typ
 curl -s $B/shows/$SHOW | jq .counts        # {"available":2,"held":0,"confirmed":2}
 ```
 
+## Kursi: the booking UI
+
+https://kursi.amogh.cloud is a booking site on top of this service, served by the same app. Browsers get the UI at `/`, while curl still gets the JSON index.
+- **Booking:**
+  - Pick an event, then a priced section on the venue map.
+  - Zoom into the seats with Ctrl+scroll or pinch; hover for row, seat and price.
+  - Book seats, or a quantity in a standing area.
+  - Pay on a mock checkout that confirms the hold. Its countdown runs on the server's clock, and there's a "simulate a failed payment" switch.
+- **Live:** seat states refresh every second, so seats taken by others turn grey as you watch. If someone beats you to a seat, you're told immediately.
+- **Two buyers in one browser:** each tab is its own guest buyer. "Open 2nd buyer" lets you race yourself.
+- **Rush lab:** make your own copy of a venue and send up to 1,500 bots at it through the real reserve path. Watch `available + held + confirmed = total` hold the whole time; the spike also shows on the public dashboard.
+
+The code is in `web/` (Preact + TypeScript, no CDN, about 27 KB gzipped). The Dockerfile builds it into the jar. The demo endpoints (`/demo/**`) are the only rate-limited ones, per IP; the reservation API itself is never throttled. Visitors' demo shows are deleted after 24 h. Design notes are in [WRITEUP §8](WRITEUP.md#8-beyond-the-brief-kursi-a-booking-ui-on-the-same-service).
+
 ## Observability
 
 | What | Where |
@@ -111,7 +135,7 @@ curl -s $B/shows/$SHOW | jq .counts        # {"available":2,"held":0,"confirmed"
 | Seat state (read from MySQL, so it reconciles with the API) | `seats_available`, `seats_held`, `seats_confirmed`, `seats_capacity` `{show_id}` |
 | Latency / saturation | `reservation_reserve_seconds` histogram by outcome, `http_server_requests_seconds`, `hikaricp_connections_{active,pending}` |
 | Logs | ECS JSON on stdout. Every request has an `X-Request-Id` (yours if you send one), carried on every log line, plus one structured outcome line per reserve/cancel/confirm/expiry. In production they ship to Grafana Cloud Loki. |
-| Dashboard | `ops/grafana/dashboards/seat-reservation.json`: preloaded in local Grafana, and the same file is on Grafana Cloud |
+| Dashboard | `ops/grafana/dashboards/seat-reservation.json`: preloaded in local Grafana (with data source and show pickers). The public Grafana Cloud dashboard uses `ops/grafana/seat-reservation-public.json`, a variable-free variant, because public dashboards don't support template variables |
 
 ## Repository map
 
@@ -119,14 +143,16 @@ curl -s $B/shows/$SHOW | jq .counts        # {"available":2,"held":0,"confirmed"
 src/main/java/dev/amogh/seats/
   reservation/   ReservationService (the transaction), ReservationRepository (all seat-moving SQL),
                  IdempotencyRepository, HoldSweeper
-  show/          shows, the immutable show catalog
+  show/          shows, sections, the immutable show catalog, listing and seat map
+  demo/          Kursi demo: venue templates, featured events, rush bots, rate limits, cleanup
   auth/          JWT resource server, token minting
   obs/           business metrics, DB-derived seat gauges, readiness check
-  web/           request ids + access log, JSON error handling
+  web/           request ids + access log, JSON error handling, serving the UI
 src/main/resources/db/migration/   schema (Flyway)
 src/test/                          Testcontainers suites, including the concurrency races
+web/                               the Kursi UI (Preact + TypeScript) and its Playwright tests
 loadtest/                          the burst client
 deploy/                            production compose override, Caddyfile, VM bootstrap, deploy-with-rollback
 ops/                               Prometheus, Grafana dashboard, Alloy
-.github/workflows/ci.yml           tests -> compose smoke burst -> multi-arch image -> deploy -> live smoke burst
+.github/workflows/ci.yml           tests -> compose smoke burst -> UI end-to-end -> multi-arch image -> deploy -> live smoke burst
 ```
