@@ -2,12 +2,25 @@
 
     python ops/grafana/generate_dashboard.py ops/grafana/dashboards/seat-reservation.json
     python ops/grafana/generate_dashboard.py cloud.json --with-logs   # adds a Loki logs row (Grafana Cloud)
+    python ops/grafana/generate_dashboard.py ops/grafana/seat-reservation-public.json --public
+
+--public builds the version to share as a Grafana *public dashboard*. Public
+dashboards don't support template variables, so it has none: no data source
+pickers (the import dialog asks for the Prometheus and Loki sources once, via
+__inputs, and writes their ids into the saved dashboard), no show dropdown (seat
+panels cover the featured Kursi events), and logs without the request-id box.
+It keeps the same uid, so importing it over the existing dashboard keeps the
+public link.
 """
 import json
 import sys
 
-DS = {"type": "prometheus", "uid": "${datasource}"}
-LOKI = {"type": "loki", "uid": "${logs}"}
+PUBLIC = "--public" in sys.argv
+OUT = [a for a in sys.argv[1:] if not a.startswith("--")][0]
+DS = {"type": "prometheus", "uid": "${DS_PROM}" if PUBLIC else "${datasource}"}
+LOKI = {"type": "loki", "uid": "${DS_LOGS}" if PUBLIC else "${logs}"}
+# Seat gauges: the show picked in the dropdown, or (public) the featured events.
+SHOW = 'kind="featured"' if PUBLIC else 'show_id=~"$show"'
 EXCL = 'uri!~"/metrics|/health.*"'
 
 panels = []
@@ -64,8 +77,8 @@ stat("5xx responses (range)",
      f'sum(increase(http_server_requests_seconds_count{{status=~"5..",{EXCL}}}[$__range])) or vector(0)',
      0, y, thresholds=GREEN_RED_AT_1, decimals=0, color_mode="background",
      desc="Must stay 0: declines are 4xx domain outcomes, never server errors.")
-stat("Reconciliation drift (selected show)",
-     'sum(seats_available{show_id=~"$show"}) + sum(seats_held{show_id=~"$show"}) + sum(seats_confirmed{show_id=~"$show"}) - sum(seats_capacity{show_id=~"$show"})',
+stat("Reconciliation drift (featured events)" if PUBLIC else "Reconciliation drift (selected show)",
+     f'sum(seats_available{{{SHOW}}}) + sum(seats_held{{{SHOW}}}) + sum(seats_confirmed{{{SHOW}}}) - sum(seats_capacity{{{SHOW}}})',
      4, y, thresholds=[{"color": "red", "value": -1e9}, {"color": "green", "value": 0}, {"color": "red", "value": 1}],
      decimals=0, color_mode="background",
      desc="available + held + confirmed - capacity. Must be exactly 0.")
@@ -93,10 +106,10 @@ ts("HTTP responses / s by status", [
     (f"sum by (status) (rate(http_server_requests_seconds_count{{{EXCL}}}[$__rate_interval]))", "{{status}}"),
 ], 12, y, unit="reqps", stack=True)
 y += 8
-ts("Seats in selected show", [
-    ('sum(seats_available{show_id=~"$show"})', "available"),
-    ('sum(seats_held{show_id=~"$show"})', "held"),
-    ('sum(seats_confirmed{show_id=~"$show"})', "confirmed"),
+ts("Seats across the featured events" if PUBLIC else "Seats in selected show", [
+    (f'sum(seats_available{{{SHOW}}})', "available"),
+    (f'sum(seats_held{{{SHOW}}})', "held"),
+    (f'sum(seats_confirmed{{{SHOW}}})', "confirmed"),
 ], 0, y, stack=True, desc="Read from MySQL every second. The stack height is always the capacity.")
 ts("Reserve latency", [
     ("histogram_quantile(0.50, sum by (le) (rate(reservation_reserve_seconds_bucket[$__rate_interval])))", "p50"),
@@ -122,8 +135,8 @@ ts("Heap", [
 ], 16, y, w=8, unit="bytes")
 y += 8
 
-with_logs = len(sys.argv) > 2 and sys.argv[2] == "--with-logs"
-templating = [
+with_logs = "--with-logs" in sys.argv or PUBLIC
+templating = [] if PUBLIC else [
     # Grafana Cloud stacks also ship internal Prometheus/Loki sources (usage, alert
     # history); prefer the stack's own "...-prom" / "...-logs" when they exist.
     {"name": "datasource", "type": "datasource", "query": "prometheus", "label": "Metrics",
@@ -136,18 +149,21 @@ templating = [
      "refresh": 2, "includeAll": True, "allValue": ".*", "multi": False,
      "current": {"text": "All", "value": "$__all"}, "sort": 0},
 ]
-if with_logs:
+if with_logs and not PUBLIC:
     templating.insert(1, {"name": "logs", "type": "datasource", "query": "loki", "label": "Logs",
                           "regex": "/.*-logs$/", "current": {}, "hide": 0})
     templating.append({"name": "request_id", "type": "textbox", "label": "request id", "query": "",
                        "current": {"text": "", "value": ""}})
+if with_logs:
     row("Logs", y)
     y += 1
     panels.append({
-        "type": "logs", "title": "Reserve outcomes and errors (filter by request id above)", "id": nid(),
+        "type": "logs", "id": nid(),
+        "title": "Reserve outcomes and errors" if PUBLIC else "Reserve outcomes and errors (filter by request id above)",
         "datasource": LOKI, "gridPos": {"h": 12, "w": 24, "x": 0, "y": y},
         "targets": [{"refId": "A", "datasource": LOKI,
-                     "expr": '{service_name="seat-reservation"} |= "$request_id" | json | event=~"reserve|cancel|confirm|expire" or log_level=~"WARN|ERROR"'}],
+                     "expr": '{service_name="seat-reservation"}' + ('' if PUBLIC else ' |= "$request_id"')
+                             + ' | json | event=~"reserve|add_to_hold|cancel|confirm|expire|rush_.*" or log_level=~"WARN|ERROR"'}],
         "options": {"showTime": True, "wrapLogMessage": True, "sortOrder": "Descending", "enableLogDetails": True},
     })
 
@@ -164,7 +180,16 @@ dashboard = {
     "annotations": {"list": []},
     "panels": panels,
 }
-with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as f:
+if PUBLIC:
+    # Grafana's import dialog asks for these and substitutes the chosen data source ids.
+    dashboard["__inputs"] = [
+        {"name": "DS_PROM", "label": "Prometheus (the stack's ...-prom)", "type": "datasource",
+         "pluginId": "prometheus", "pluginName": "Prometheus"},
+        {"name": "DS_LOGS", "label": "Loki (the stack's ...-logs)", "type": "datasource",
+         "pluginId": "loki", "pluginName": "Loki"},
+    ]
+    dashboard["refresh"] = "10s"
+with open(OUT, "w", encoding="utf-8", newline="\n") as f:
     json.dump(dashboard, f, indent=2)
     f.write("\n")
-print("wrote", sys.argv[1], len(panels), "panels")
+print("wrote", OUT, len(panels), "panels", "(public)" if PUBLIC else "")
